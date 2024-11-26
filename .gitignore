@@ -1,0 +1,33 @@
+# LaTeX temporary files
+*.aux
+*.log
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.synctex
+*.dvi
+*.bbl
+*.blg
+*.out
+*.toc
+*.lof
+*.lot
+*.idx
+*.ilg
+*.ind
+*.nav
+*.snm
+*.vrb
+
+
+# Generated PDFs (uncomment if you don't want to track PDFs)
+*.pdf
+
+# Latexmk
+.latexmk/
+
+# VS Code LaTeX Workshop
+.vscode/
+
+# macOS system files
+.DS_Store
