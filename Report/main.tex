@@ -26,7 +26,7 @@ use a camera to collect images, process them on the edge device and send the pro
 we will use Amazon Rekognition to analyze the faces and compare them with a database(S3) of known faces. If an unknown face
 is detected, we will send a signal to the edge device to trigger an alarm for the responding Iot device.
 There are a couple of hurdles we need to overcome for this project. A high level of parallelism is needed to process the images
-send from at least 5 cameras.\\
+send from at least 5 Video sources.
 \\
 \textbf{Main Steps:}
 \begin{itemize}
@@ -42,10 +42,11 @@ send from at least 5 cameras.\\
 \begin{itemize}
     \item \textbf{Data Collection:} At the start we will emulate data collection by using WiseNet. Later we will use a real camera to collect data(Maybe).
     \item \textbf{Data Processing:} For the data processing we will use OpenCV, and for the face recognition we will use YOLO.
-    \item \textbf{Data Storage:} We will use AWS S3 to store the processed images. Important to note that we will only store the processed images(faces) and not the raw images.
+    \item \textbf{Data Storage:} We will use AWS S3 to store the processed images. Important to note that we will only store the processed images(faces) and not the raw images. To keep 
+            track of the processed images we will use a database to link the IOT device with the processed images.
     \item \textbf{Data Analysis:} After the images are stored in S3, the edge device will send a signal to a lambda function which will trigger the face recognition process in Amazon Rekognition.
     \item \textbf{Signal Processing:} If an unknown face is detected, the lambda function will send a signal to the edge device to trigger an alarm.  
-    \item \textbf{User Interface:} We will use a simple web interface to display the unknown faces and disarm the alarm.
+    \item \textbf{User Interface:} We will use a simple web interface to display the unknown faces and disarm the alarm. 
 \end{itemize}
 Describe your system in detail, including a figure for your architectural diagram (IoT, Edge, Cloud layers, components developed and services used).
 
@@ -57,7 +58,35 @@ Describe your system in detail, including a figure for your architectural diagra
 \end{figure}
 
 \section{Implementation details}
-Provide details about the frameworks and resources used. Justify your decisions carefully.
+\subsection{Data Collection}
+\begin{itemize}
+    \item \textbf{WiseNet:} ...
+    \item \textbf{Camera:} ...
+\end{itemize}
+\subsection{Data Processing}
+\begin{itemize}
+    \item \textbf{OpenCV:} ...
+    \item \textbf{YOLO:} ...
+\end{itemize}
+\subsection{Data Storage}
+\begin{itemize}
+    \item \textbf{AWS S3:} ...
+    \item \textbf{Database:} ...
+\end{itemize}
+\subsection{Data Analysis}
+\begin{itemize}
+    \item \textbf{Amazon Rekognition:} ...
+\end{itemize}
+\subsection{Signal Processing}  
+\begin{itemize}
+    \item \textbf{Lambda Function:} ...
+    \item \textbf{NATS:} ...
+\end{itemize}
+\subsection{User Interface}
+\begin{itemize}
+    \item \textbf{Web Interface:} ...
+    \item \textbf{Disarm Alarm:} ...
+\end{itemize}
 
 \section{Evaluation}
 TODO: For later after the implementation is done.
