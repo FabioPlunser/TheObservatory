@@ -49,14 +49,14 @@ images sent from at least 5 video sources.
     \item \textbf{Data Analysis:} After the images are stored in S3, the edge device will send a signal to a Lambda function which will trigger the face recognition 
                                     process in Amazon Rekognition.
     \item \textbf{Signal Processing:} If an unknown face is detected, the Lambda function will send a signal to the edge device to trigger an alarm for a given IoT device.
-    \item \textbf{User Interface:} We will use a simple web interface to display the unknown faces and disarm the alarm.
+    \item \textbf{User Interface:} We will use a simple web interface to display the unknown faces(maybe) and disarm the alarm.
 \end{itemize}
 % Describe your system in detail, including a figure for your architectural diagram (IoT, Edge, Cloud layers, components developed and services used).
 
 \begin{figure}[h!]
     \centering
     \includegraphics[width=1\linewidth]{images/architecture.excalidraw.png}
-    \caption{Example of your architectural diagram.}
+    \caption{Prototype of the system architecture.}
     \label{fig:enter-label}
 \end{figure}
 
