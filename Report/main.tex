@@ -23,34 +23,35 @@
 \maketitle
 
 \section{Introduction}
-For this Project we need to implement a system that can detect unknown faces in a given environment(Iot device/ cameras). For that it will
-use a camera to collect images, process them on the edge device and send the processed images to the cloud. In the cloud
-we will use Amazon Rekognition to analyze the faces and compare them with a database(S3) of known faces. If an unknown face
-is detected, we will send a signal to the edge device to trigger an alarm for the responding Iot device.
-There are a couple of hurdles we need to overcome for this project. A high level of parallelism is needed to process the images
-send from at least 5 Video sources.
+For this project, we need to implement a system that can detect unknown faces in a given environment (IoT device/cameras). 
+For that, it will use a camera to collect images, process them on the edge device, and send the processed images to the cloud. 
+In the cloud, we will use Amazon Rekognition to analyze the faces and compare them with a database (S3) of known faces. 
+If an unknown face is detected, we will send a signal to the edge device to trigger an alarm for the responding IoT device.
+There are a couple of hurdles we need to overcome for this project. A high level of parallelism is needed to process the 
+images sent from at least 5 video sources.
 \\
 \textbf{Main Steps:}
 \begin{itemize}
-    \item \textbf{Data Collection:} We need to collect images from the sensors and send over the edge device to the cloud.
-    \item \textbf{Data Processing:} We need to do preceding on the images to extract the relevant information(faces) on the edge device.
-    \item \textbf{Data Storage:} We need to store the processed images in the cloud(S3).
-    \item \textbf{Data Analysis:} We need to analyze the faces in the cloud and cross reference them with faces in the database.
-    \item \textbf{Signal Processing:} We need to send a signal to the edge device to notify the Iot device about an unknown face, and subsequently trigger an alarm.
-    \item \textbf{User Interface:} We need to provide a user interface to the user to view the unknown faces(Maybe) and disarm the alarm.
+    \item \textbf{Data Collection:} We need to collect images from the sensors and send them over the edge device to the cloud.
+    \item \textbf{Data Processing:} We need to do preprocessing on the images to extract the relevant information (faces) on the edge device.
+    \item \textbf{Data Storage:} We need to store the processed images in the cloud (S3).
+    \item \textbf{Data Analysis:} We need to analyze the faces in the cloud and cross-reference them with faces in the database.
+    \item \textbf{Signal Processing:} We need to send a signal to the edge device to notify the IoT device about an unknown face and subsequently trigger an alarm.
+    \item \textbf{User Interface:} We need to provide a user interface for the user to view the unknown faces (maybe) and disarm the alarm.
 \end{itemize}
 
 \section{System architecture}
 \begin{itemize}
-    \item \textbf{Data Collection:} At the start we will emulate data collection by using WiseNet. Later we will use a real camera to collect data(Maybe).
-    \item \textbf{Data Processing:} For the data processing we will use OpenCV, and for the face recognition we will use YOLO.
-    \item \textbf{Data Storage:} We will use AWS S3 to store the processed images. Important to note that we will only store the processed images(faces) and not the raw images. To keep 
-            track of the processed images we will use a database to link the IOT device with the processed images.
-    \item \textbf{Data Analysis:} After the images are stored in S3, the edge device will send a signal to a lambda function which will trigger the face recognition process in Amazon Rekognition.
-    \item \textbf{Signal Processing:} If an unknown face is detected, the lambda function will send a signal to the edge device to trigger an alarm.  
-    \item \textbf{User Interface:} We will use a simple web interface to display the unknown faces and disarm the alarm. 
+    \item \textbf{Data Collection:} At the start, we will emulate the data collection by using WiseNet. Later, we will use a real camera to collect data (maybe).
+    \item \textbf{Data Processing:} For the data processing, we will use OpenCV, and for the face recognition, we will use YOLO.
+    \item \textbf{Data Storage:} We will use AWS S3 to store the processed images. It is important to note that we will only store the processed images (faces) 
+                                    and not the raw images. To keep track of the processed images, we will use a database to link an IoT device with their processed images.
+    \item \textbf{Data Analysis:} After the images are stored in S3, the edge device will send a signal to a Lambda function which will trigger the face recognition 
+                                    process in Amazon Rekognition.
+    \item \textbf{Signal Processing:} If an unknown face is detected, the Lambda function will send a signal to the edge device to trigger an alarm.
+    \item \textbf{User Interface:} We will use a simple web interface to display the unknown faces and disarm the alarm.
 \end{itemize}
-Describe your system in detail, including a figure for your architectural diagram (IoT, Edge, Cloud layers, components developed and services used).
+% Describe your system in detail, including a figure for your architectural diagram (IoT, Edge, Cloud layers, components developed and services used).
 
 \begin{figure}[h!]
     \centering
@@ -91,7 +92,7 @@ Describe your system in detail, including a figure for your architectural diagra
 \end{itemize}
 
 \section{Evaluation}
-TODO: For later after the implementation is done.
-Evaluation of the response time and scalability (number of devices and traffic) to prove the correctness of your implementation. The more detailed the better. 
+% Evaluation of the response time and scalability (number of devices and traffic) to prove the correctness of your implementation. 
+% The more detailed the better. 
 
 \end{document}
