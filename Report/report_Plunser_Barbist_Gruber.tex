@@ -27,8 +27,7 @@ For this project, we need to implement a system that can detect unknown faces in
 For that, it will use a camera to collect images, process them on the edge device, and send the processed images to the cloud. 
 In the cloud, we will use Amazon Rekognition to analyze the faces and compare them with a database (S3) of known faces. 
 If an unknown face is detected, we will send a signal to the edge device to trigger an alarm for the responding IoT device.
-There are a couple of hurdles we need to overcome for this project. A high level of parallelism is needed to process the 
-images sent from at least 5 video sources.
+A high level of parallelism is needed to process the images sent from at least 5 video sources. 
 \\
 \textbf{Main Steps:}
 \begin{itemize}
