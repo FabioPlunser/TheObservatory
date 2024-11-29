@@ -31,3 +31,6 @@
 
 # macOS system files
 .DS_Store
+
+# wise data for debugging
+/data
