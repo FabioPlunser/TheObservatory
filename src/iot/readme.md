@@ -24,7 +24,7 @@ For the setup of the IoT devices, using a phone do the following:
 7. After the service is created, now go to the cluster and click on the service you created and click on the task
 8. Click on the network interface and copy the public IP address
 9.  Update the public IP address in the IoT device code(./src/iot/iot.py) and run the code
-10. Open the app you downloaded and enter the public IP address in the settings(rtmp://<public-url>:1935/live/stream) and start the stream
+10. Open the app you downloaded and enter the public IP address in the settings(rtmp://<public-url>:1935/live/stream7) and start the stream
 11. Now a new folder should be created in the root directory with the name "output_frames" and the frames should be saved there
 If use only want to use the WiseNet video feed, do the following:
 1. Step 2-9 from above.

@@ -1,9 +1,8 @@
 import os
 import threading
 import subprocess
-import time
+import signal
 
-FRAME_INTERVAL = 1  # Process every n-th frame set to 1 to process all frames
 STREAM_URLS = [
     "rtmp://44.204.173.180:1935/live/stream1",
     "rtmp://44.204.173.180:1935/live/stream2",
@@ -13,21 +12,35 @@ STREAM_URLS = [
     "rtmp://44.204.173.180:1935/live/stream6"
 ]
 
+stop_flag = threading.Event()
+
+def signal_handler(sig, frame):
+    print('Stopping...')
+    stop_flag.set()
+
+signal.signal(signal.SIGINT, signal_handler)
+
 def send_video(video_paths, stream_url):
-    while True:
+    while not stop_flag.is_set():
         for video_path in video_paths:
+            if stop_flag.is_set():
+                break
             command = [
                 'ffmpeg',
-                '-re',  # Read input at native frame rate
-                '-i', video_path,  # Input file
-                '-c:v', 'libx264',  # Video codec
+                '-re',                  # Read input at native frame rate
+                '-i', video_path,       # Input file
+                '-c:v', 'libx264',      # Video codec
                 '-preset', 'veryfast',  # Encoding speed
-                '-f', 'flv',  # Output format
-                '-loglevel', 'error',  # Suppress warnings, show only errors
-                stream_url  # Output URL
+                '-f', 'flv',            # Output format
+                '-loglevel', 'error',   # Suppress warnings, show only errors
+                stream_url              # Output URL
             ]
-            subprocess.run(command)
-
+            process = subprocess.Popen(command)
+            while process.poll() is None:
+                if stop_flag.is_set():
+                    process.terminate()
+                    break
+            process.wait()
 def main():
     dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/video_sets'))
 
@@ -50,7 +63,6 @@ def main():
             thread = threading.Thread(target=send_video, args=(video_paths, stream_url))
             thread.start()
             threads.append(thread)
-            time.sleep(1) 
 
     for thread in threads:
         thread.join()
