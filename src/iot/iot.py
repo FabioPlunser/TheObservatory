@@ -30,8 +30,6 @@ def send_video(video_paths, stream_url):
 
 def main():
     dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/video_sets'))
-    output_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), './output_frames'))
-    os.makedirs(output_base_dir, exist_ok=True)
 
     threads = []
 

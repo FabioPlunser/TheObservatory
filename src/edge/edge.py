@@ -9,7 +9,8 @@ STREAM_URLS = [
     "rtmp://44.204.173.180:1935/live/stream3",
     "rtmp://44.204.173.180:1935/live/stream4",
     "rtmp://44.204.173.180:1935/live/stream5",
-    "rtmp://44.204.173.180:1935/live/stream6"
+    "rtmp://44.204.173.180:1935/live/stream6",
+    "rtmp://44.204.173.180:1935/live/stream7"
 ]
 
 def process_video(source, frame_interval, output_dir):
