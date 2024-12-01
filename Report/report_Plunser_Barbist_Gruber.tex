@@ -41,7 +41,7 @@ A high level of parallelism is needed to process the images sent from at least 5
 
 \section{System architecture}
 \begin{itemize}
-    \item \textbf{Data Collection:} At the start, we will emulate the data collection by using WiseNet. Later, we will use a real camera to collect data (maybe).
+    \item \textbf{Data Collection:} At the start, we will emulate the data collection by using WiseNet. Later, we will use a real camera to collect data.
     \item \textbf{Data Processing:} For the data preprocessing, we will use OpenCV, and for the face recognition, we will use YOLO(not sure about the exact version).
     \item \textbf{Data Storage:} We will use AWS S3 to store the processed images.To save bandwidth, we will only store(required for Amazon Rekognition) the processed images (faces) 
                                     and not the raw images. To keep track of the processed images, we will use a database to link an IoT device with their processed images.
@@ -62,12 +62,16 @@ A high level of parallelism is needed to process the images sent from at least 5
 \section{Implementation details}
 \subsection{Data Collection}
 \begin{itemize}
-    \item \textbf{WiseNet:} ...
-    \item \textbf{Camera:} ...
+    \item \textbf{WiseNet:} The data set contains video sequences from 6 different cameras.  
+    \item \textbf{Camera:} For the cameras we use a nginx server running in a docker container on aws ecs.
+    \item \textbf{Aws ECS:} This is not really needed, the camera feed could also be handled on the same device 
+    as the edge.py script, but we wanted to have a more realistic setup, where we could get a camera feed from
+    a rtmp stream. For the setup look at the readme file in the iot folder. 
 \end{itemize}
 \subsection{Data Processing}
 \begin{itemize}
-    \item \textbf{OpenCV:} ...
+    \item \textbf{OpenCV:} OpenCV is used on a edge device to capture the video feed from the camera. To save some
+    computation time, we check if something has changed in the frame, before we process it.
     \item \textbf{YOLO:} ...
 \end{itemize}
 \subsection{Data Storage}
