@@ -23,8 +23,6 @@ signal.signal(signal.SIGINT, signal_handler)
 def send_video(video_paths, stream_url):
     while not stop_flag.is_set():
         for video_path in video_paths:
-            if stop_flag.is_set():
-                break
             command = [
                 'ffmpeg',
                 '-re',                  # Read input at native frame rate

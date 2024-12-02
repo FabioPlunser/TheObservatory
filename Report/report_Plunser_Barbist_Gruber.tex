@@ -41,7 +41,9 @@ A high level of parallelism is needed to process the images sent from at least 5
 
 \section{System architecture}
 \begin{itemize}
-    \item \textbf{Data Collection:} At the start, we will emulate the data collection by using WiseNet. Later, we will use a real camera to collect data.
+    \item \textbf{Data Collection:} The main data collection will be consisting of video sequences from 6 different cameras provided by the WiseNet dataset. 
+                                    For the emulation of the cameras, we will use a nginx server running in a docker container on AWS ECS. This setup will
+                                    enable us to also use a real camera feed from a rtmp stream, which will give a more realistic setup.
     \item \textbf{Data Processing:} For the data preprocessing, we will use OpenCV, and for the face recognition, we will use YOLO(not sure about the exact version).
     \item \textbf{Data Storage:} We will use AWS S3 to store the processed images.To save bandwidth, we will only store(required for Amazon Rekognition) the processed images (faces) 
                                     and not the raw images. To keep track of the processed images, we will use a database to link an IoT device with their processed images.
@@ -62,16 +64,17 @@ A high level of parallelism is needed to process the images sent from at least 5
 \section{Implementation details}
 \subsection{Data Collection}
 \begin{itemize}
-    \item \textbf{WiseNet:} The data set contains video sequences from 6 different cameras.  
-    \item \textbf{Camera:} For the cameras we use a nginx server running in a docker container on aws ecs.
-    \item \textbf{Aws ECS:} This is not really needed, the camera feed could also be handled on the same device 
-    as the edge.py script, but we wanted to have a more realistic setup, where we could get a camera feed from
-    a rtmp stream. For the setup look at the readme file in the iot folder. 
+    \item \textbf{Nginx-RTMP:} For the data transfer from the iot devices to the edge device we use a nginx server running in a docker container on aws ecs.
+                                The docker image "tiangolo/nginx-rtmp" is used for this purpose. In addition to the image, we also use the "nginx.conf" file to configure the server.
+    \item \textbf{WiseNet:} The dataset consists of 6 different camera feeds. We will use the iot.py script to send the 6 different camera feeds over the nginx server to the edge device.
+                            Each of the cameras have 11 different video sequences(except of one), after all the video sequences are played, the cameras will start again from the beginning.
+                            The data set itself will not be provided in the report materials, but can be found in the WiseNet dataset. For the exact setup where to put the dataset, look at the readme file in the iot folder.     
+    \item \textbf{Camera:} In addition to the WiseNet dataset, we can also use a real camera feed from a rtmp stream. For the setup look at the readme file in the iot folder.
 \end{itemize}
 \subsection{Data Processing}
 \begin{itemize}
     \item \textbf{OpenCV:} OpenCV is used on a edge device to capture the video feed from the camera. To save some
-    computation time, we check if something has changed in the frame, before we process it.
+    computation time, we check if something has changed in the frame, before we process it. 
     \item \textbf{YOLO:} ...
 \end{itemize}
 \subsection{Data Storage}
