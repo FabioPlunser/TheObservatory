@@ -14,8 +14,6 @@ STREAM_URLS = [
     HOST_ADDR + "/live/stream6"
 ]
 
-USE_LOCAL = False
-
 stop_flag = threading.Event()
 
 def signal_handler(sig, frame):

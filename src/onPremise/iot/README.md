@@ -30,7 +30,7 @@ If use only want to use the WiseNet video feed, do the following:
 1. Step 2-9 from above.
 2. Copy the data from WiseNet like following: TheObservatory\src\onPremise\iot\video_sets\set_X\videoX_Y.avi
    1. The dataset should have 11 sets with 5 videos in set 1-4, and 6 videos in set 5-11.
-3. Start the iot.py script(To kill the script close the terminal, ctrl+c does not work)
+3. Start the iot.py script(To kill the script close the terminal, ctrl+c does not work) ffmpeg is required to run the script
 4. Start the edge.py script(To kill the script close the terminal, ctrl+c does not work)
 5. The frames should be saved in the output_frames folder
 
