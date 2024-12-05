@@ -1,7 +1,22 @@
 import cv2
 import threading
 import signal
-
+from natsClient import NatsClient
+from natsClient import Commands
+# -----------------------------------------------------------------------
+# -----------------------------------------------------------------------
+import logging 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("edge.log")
+    ]
+)
+logger = logging.getLogger(__name__)
+# -----------------------------------------------------------------------
+# -----------------------------------------------------------------------
 FRAME_INTERVAL = 1  # Process every n-th frame
 CHANGE_THRESHOLD = 1 # Threshold for detecting changes in frames
 
@@ -19,7 +34,7 @@ STREAM_URLS = [
 stop_flag = threading.Event()
 
 def signal_handler(sig, frame):
-    print('Stopping...')
+    logger.info('Stopping...')
     stop_flag.set()
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -28,7 +43,7 @@ def process_video(source, frame_interval, window_name):
     cap = cv2.VideoCapture(source)
     
     if not cap.isOpened():
-        print(f"Error: Could not open video {source}.")
+        logger.error(f"Error: Could not open video {source}.")
         return
     
     frame_count = 0
@@ -36,7 +51,7 @@ def process_video(source, frame_interval, window_name):
     while cap.isOpened() and not stop_flag.is_set():
         ret, frame = cap.read()
         if not ret:
-            print("Failed to read frame")
+            logger.error("Failed to read frame")
             break
         
         # Only process frames at the specified interval
@@ -48,8 +63,12 @@ def process_video(source, frame_interval, window_name):
                 if mean_diff > CHANGE_THRESHOLD:
                     resized_frame = cv2.resize(frame, (640, 480))  
                     cv2.imshow(window_name, resized_frame)
-                    print(f"Processed frame {frame_count} with mean difference {mean_diff}")
-                    # processing logic here
+                    logger.info(f"Processed frame {frame_count} with mean difference {mean_diff}")
+                    # YOLO detection
+
+                    # send message to nats
+                    if(nats): 
+                        nats.send_message(Commands.NEW_FRAME.value, source)
 
             prev_frame = gray_frame
         
@@ -64,6 +83,11 @@ def process_video(source, frame_interval, window_name):
     cv2.destroyAllWindows()
 
 def main():
+    # init nats 
+    global nats  
+    nats = NatsClient("nats://localhost:4222")
+    nats.add_subscription(Commands.ALARM.value, lambda msg: print(f"Received alarm: {msg}"))
+
     threads = []
 
     for stream_url in STREAM_URLS:
