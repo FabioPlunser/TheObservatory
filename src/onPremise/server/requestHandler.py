@@ -5,14 +5,15 @@ import signal
 FRAME_INTERVAL = 1  # Process every n-th frame
 CHANGE_THRESHOLD = 1 # Threshold for detecting changes in frames
 
+HOST_ADDR = "rtmp://localhost:1935"
+
 STREAM_URLS = [
-    "rtmp://44.204.173.180:1935/live/stream1",
-    "rtmp://44.204.173.180:1935/live/stream2",
-    "rtmp://44.204.173.180:1935/live/stream3",
-    "rtmp://44.204.173.180:1935/live/stream4",
-    "rtmp://44.204.173.180:1935/live/stream5",
-    "rtmp://44.204.173.180:1935/live/stream6",
-    "rtmp://44.204.173.180:1935/live/stream7"
+    HOST_ADDR + "/live/stream1",
+    HOST_ADDR + "/live/stream2",
+    HOST_ADDR + "/live/stream3",
+    HOST_ADDR + "/live/stream4",
+    HOST_ADDR + "/live/stream5",
+    HOST_ADDR + "/live/stream6"
 ]
 
 stop_flag = threading.Event()

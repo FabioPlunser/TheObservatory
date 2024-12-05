@@ -3,14 +3,18 @@ import threading
 import subprocess
 import signal
 
+HOST_ADDR = "rtmp://localhost:1935"
+
 STREAM_URLS = [
-    "rtmp://44.204.173.180:1935/live/stream1",
-    "rtmp://44.204.173.180:1935/live/stream2",
-    "rtmp://44.204.173.180:1935/live/stream3",
-    "rtmp://44.204.173.180:1935/live/stream4",
-    "rtmp://44.204.173.180:1935/live/stream5",
-    "rtmp://44.204.173.180:1935/live/stream6"
+    HOST_ADDR + "/live/stream1",
+    HOST_ADDR + "/live/stream2",
+    HOST_ADDR + "/live/stream3",
+    HOST_ADDR + "/live/stream4",
+    HOST_ADDR + "/live/stream5",
+    HOST_ADDR + "/live/stream6"
 ]
+
+USE_LOCAL = False
 
 stop_flag = threading.Event()
 
@@ -39,8 +43,9 @@ def send_video(video_paths, stream_url):
                     process.terminate()
                     break
             process.wait()
+
 def main():
-    dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../data/video_sets'))
+    dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), './data/video_sets'))
 
     threads = []
 
