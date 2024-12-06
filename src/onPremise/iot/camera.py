@@ -9,24 +9,30 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class Camera:
-    def __init__(self, camera_index=0, edge_server_url="http://localhost:8080"):
+    def __init__(self, camera_index=None, video_path=None, edge_server_url="http://localhost:8080"):
         self.camera_id = str(uuid.uuid4())
         self.edge_server_url = edge_server_url
         self.camera_index = camera_index
+        self.video_path = video_path
         self.cap = None
         self.is_running = False
         self.stream_thread = None
 
     def start(self):
         try:
-            self.cap = cv2.VideoCapture(self.camera_index)
-            if not self.cap.isOpened():
-                raise RuntimeError(f"Could not open camera {self.camera_index}")
+            if self.video_path:
+                self.cap = cv2.VideoCapture(self.video_path)
+                if not self.cap.isOpened():
+                    raise RuntimeError(f"Could not open video file {self.video_path}")
+            else:
+                self.cap = cv2.VideoCapture(self.camera_index)
+                if not self.cap.isOpened():
+                    raise RuntimeError(f"Could not open camera {self.camera_index}")
 
-            # Set camera properties
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            self.cap.set(cv2.CAP_PROP_FPS, 30)
+                # Set camera properties
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                self.cap.set(cv2.CAP_PROP_FPS, 30)
 
             # Register with edge server
             self.register()
@@ -80,7 +86,7 @@ class Camera:
                     f"{self.edge_server_url}/frame",
                     files={'frame': ('frame.jpg', jpeg.tobytes(), 'image/jpeg')},
                     data={'camera_id': self.camera_id},
-                    timeout=1
+                    timeout=3
                 )
                 response.raise_for_status()
 

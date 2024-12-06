@@ -1,12 +1,8 @@
 from fastapi import FastAPI, File, UploadFile, Form, WebSocket
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-import cv2
-import numpy as np
 import logging
 import asyncio
-from datetime import datetime
-import json
 import os
 from typing import Dict
 import base64
