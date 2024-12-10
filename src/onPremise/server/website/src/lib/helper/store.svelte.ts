@@ -1,5 +1,7 @@
 import { browser } from "$app/environment";
 
+let storage = $state([]);
+
 export function persistentStore(key: string, value: any) {
   let storage = $state({ value });
 

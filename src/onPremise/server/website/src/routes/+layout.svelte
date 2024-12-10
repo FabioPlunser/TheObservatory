@@ -1,8 +1,12 @@
 <script lang="ts">
-	import '../app.css';
-	let { children } = $props();
+  import "../app.css";
+  import Nav from "$lib/components/Nav.svelte";
+  import { setContext } from "svelte";
+  let { children } = $props();
 </script>
 
 <main class="dark:text-white">
-{@render children()}
+  <Nav />
+  <div class="mt-14"></div>
+  {@render children()}
 </main>

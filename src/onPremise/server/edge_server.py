@@ -12,8 +12,12 @@ from datetime import datetime
 import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-
 from database import Database
+
+from ultralytics import YOLO
+
+# Load a model
+model = YOLO("yolo11n.pt")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -93,7 +97,7 @@ class EdgeServer:
 edge_server = EdgeServer()
 
 async def check_camera_statuses():
-    """Check all cameras and update their status if they haven't sent data in 5 minutes"""
+    """Check all cameras and update their status if they haven't sent data in 2 minutes"""
     while True:
         current_time = datetime.now()
         for camera_id, data in edge_server.cameras.items():
@@ -103,13 +107,13 @@ async def check_camera_statuses():
             # Calculate time difference
             time_diff = current_time - last_seen
             
-            # If camera hasn't sent data for 5 minutes and isn't already offline
-            if time_diff.total_seconds() > 10 and current_status != "offline":
+            # If camera hasn't sent data for 2 minutes and isn't already offline
+            if time_diff.total_seconds() > 120 and current_status != "offline":
                 edge_server.cameras[camera_id]["status"] = "offline"
                 await db.update_camera_status(camera_id, "offline")
                 logger.info(f"Camera {camera_id} marked as offline")
                 
-        await asyncio.sleep(1)  # Check every minute
+        await asyncio.sleep(60)  # Check every minute
 
 @asynccontextmanager
 async def lifespan(app: FastAPI): 
@@ -129,6 +133,17 @@ db = Database()
 async def register_camera(registration_data: dict): 
     try:
         camera_id = registration_data["camera_id"]
+
+        existing_camera = await db.get_camera(camera_id)
+        if existing_camera:
+            logger.info(f"Camera {camera_id} already registered, updating status")
+            edge_server.cameras[camera_id] = {
+                "capabilities": registration_data["capabilities"],
+                "last_seen": datetime.now(),
+                "status": "registered"
+            }
+            return {"status": "success", "message": "Camera reconnected"}
+
         edge_server.cameras[camera_id] = {
             "capabilities": registration_data["capabilities"],
             "last_seen": datetime.now(),
@@ -162,7 +177,38 @@ async def camera_websocket(websocket: WebSocket, camera_id: str):
             
             # Update last seen timestamp
             edge_server.cameras[camera_id]["last_seen"] = datetime.now()
-            
+
+            jpg_data = base64.b64decode(frame_data["frame"])
+            nparr = np.frombuffer(jpg_data, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+
+            # Process frame asynchronously
+            # if frame is not None: 
+            #     results = model(frame)
+            #     person_detected = False 
+            #     detections = []
+
+            #     for result in results: 
+            #         boxes = result.boxes 
+            #         for box in boxes: 
+            #             if int(box.cls) == 0: 
+            #                 person_detected = True 
+
+            #                 conf = float(box.conf)
+            #                 x1, y1, x2, y2 = box.xyxy.tolist() 
+            #                 detections.append({
+            #                     "confidence": conf,
+            #                     "box": [x1, y1, x2, y2]
+            #                 })
+
+            #     frame_data["person_detected"] = person_detected
+            #     frame_data["detections"] = detections
+
+            #     if person_detected: 
+            #         logger.info(f"Person detected in frame from camera {camera_id}")
+
+
             # Broadcast frame to all viewers of this camera
             if camera_id in edge_server.viewers:
                 frame_message = json.dumps({
@@ -191,7 +237,7 @@ async def get_cameras():
             {
                 "camera_id": camera_id,
                 "capabilities": data["capabilities"],
-                "last_seen": data["last_seen"],
+                "last_seen": data["last_seen"].isoformat(),
                 "status": data["status"]
             }
             for camera_id, data in edge_server.cameras.items()

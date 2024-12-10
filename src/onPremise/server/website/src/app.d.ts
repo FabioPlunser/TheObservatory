@@ -8,6 +8,11 @@ declare global {
 		// interface PageState {}
 		// interface Platform {}
 	}
+
+	type currentPageType = {
+		name: string;
+		component: any;
+	};
 }
 
-export {};
+export { };

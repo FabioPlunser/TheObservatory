@@ -34,3 +34,5 @@
 
 # wise data for debugging
 data
+
+__pycache__/

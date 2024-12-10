@@ -1,6 +1,6 @@
 import sqlite3 
 import aiosqlite 
-from typing import Dict, List 
+from typing import Dict, List, Optional 
 from datetime import datetime
 
 class Database: 
@@ -59,7 +59,15 @@ class Database:
       db.row_factory = aiosqlite.Row
       async with db.execute("SELECT * FROM cameras") as cursor: 
         return [dict(row) for row in await cursor.fetchall()]
-      
+
+  async def get_camera(self, camera_id: str) -> Optional[Dict]:
+    async with aiosqlite.connect(self.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM cameras WHERE id = ?", (camera_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
   async def update_camera_status(self, camera_id: str, status: str):  
     async with aiosqlite.connect(self.db_path) as db:
       await db.execute("""
