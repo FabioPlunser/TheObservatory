@@ -6,6 +6,7 @@
 \usepackage{algorithmic}
 \usepackage{graphicx}
 \usepackage{textcomp}
+\usepackage{hyperref}
 \usepackage{xcolor}
 \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
     T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
@@ -84,7 +85,10 @@ A high level of parallelism is needed to process the images sent from at least 5
           Only if something has changed in the frame, the frame will be further processed to detect faces.
     \item \textbf{YOLO:} For the face detection we will use YOLO(not sure about the exact version). YOLO is a real-time object detection system that can detect objects in images and videos.
           We will use YOLO to detect faces in the images and send the processed images to the cloud. It is running on the on premise edge server which gets the video feeds to only
-          send images to cloud if a face is detected.
+          send images to cloud if a face is detected. 
+          The YOLO version we will use is version 11. This version contains 5 different models, with different sizes and speeds. The models are n, s, m, l, and x. 
+          The model n is the smallest and fastest model, but also the least accurate. The model x is the largest and slowest model, but also the most accurate.
+          See Section~\ref{sec:evaluation} for more details on the performance of the different models.
 \end{itemize}
 \subsection{Data Storage}
 \begin{itemize}
@@ -110,6 +114,7 @@ A high level of parallelism is needed to process the images sent from at least 5
 \end{itemize}
 
 \section{Evaluation}
+\label{sec:evaluation}
 % Evaluation of the response time and scalability (number of devices and traffic) to prove the correctness of your implementation. 
 % The more detailed the better. 
 
