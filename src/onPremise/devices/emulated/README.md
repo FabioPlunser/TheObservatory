@@ -1,3 +1,6 @@
+!!!(Old setup not used at the moment)!!!
+
+
 For the setup of the IoT devices, using a phone do the following:
 1. Download a app which is able to transmit data via RTMP protocol. For example, IP Webcam on Android.
 2. On aws create a repository via ECS

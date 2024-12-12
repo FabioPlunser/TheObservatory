@@ -1,0 +1,12 @@
+# devices
+requests
+opencv-python
+websockets
+aiohttp
+
+# server
+fastapi
+zeroconf
+ultralytics
+aiosqlite 
+uvicorn

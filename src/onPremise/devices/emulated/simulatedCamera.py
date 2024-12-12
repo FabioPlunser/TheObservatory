@@ -36,7 +36,7 @@ def start_simulated_camera(video_path, session):
     camera.stop()
 
 def main():
-    dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data/video_sets'))
+    dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data/video_sets'))
 
     session = requests.Session()
     adapter = HTTPAdapter(max_retries=2)
