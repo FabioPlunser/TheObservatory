@@ -14,10 +14,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from database import Database
 
-from ultralytics import YOLO
 
-# Load a model
-model = YOLO("yolo11n.pt")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,6 +22,7 @@ logger = logging.getLogger(__name__)
 class EdgeServer:
     def __init__(self):
         self.cameras: Dict[str, dict] = {}
+        self.alarms: Dict[str, dict] = {}
         self.active_connections: Dict[str, set] = {}
         self.viewers = {}
         self.zeroconf = None
@@ -158,6 +156,33 @@ async def register_camera(registration_data: dict):
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=500, detail="Registration failed")
 
+@app.post("/register-alarm")
+async def register_alarm(registration_data: dict):
+    try:
+        alarm_id = registration_data["alarm_id"]
+
+        existing_alarm = await db.get_alarm_device(alarm_id)
+        if existing_alarm:
+            logger.info(f"alarm {alarm_id} already registered, updating status")
+            edge_server.alarms[alarm_id] = {
+                "registration_time": datetime.now(),
+                "status": "registered"
+            }
+            return {"status": "success", "message": "alarm reconnected"}
+
+        edge_server.alarms[alarm_id] = {
+            "registration_time": datetime.now(),
+            "status": "registered"
+        }
+
+        await db.create_alarm_device(alarm_id, registration_data["name"], "registered")
+
+        logger.info(f"alarm {alarm_id} registered")
+        return {"status": "success", "message": "alarm registered"}
+    except Exception as e:
+        logger.error(f"Registration failed: {e}")
+        raise HTTPException(status_code=500, detail="Registration failed")
+
 @app.websocket("/ws/camera/{camera_id}")
 async def camera_websocket(websocket: WebSocket, camera_id: str):
     if camera_id not in edge_server.cameras:
@@ -248,10 +273,19 @@ async def get_cameras():
 async def get_cameras_api(): 
     return await db.get_cameras()
 
+@app.get("/api/get-alarm-devices")
+async def get_alarm_devices_api():
+    return await db.get_alarm_devices()
+
 @app.post("/api/delete-camera/{camera_id}")
 async def delete_camera(camera_id: str):
     await db.delete_camera(camera_id)
     return {"status": "success", "message": "Camera deleted"}
+
+@app.post("/api/delete-alarm_device/{alarm_device_id}")
+async def delete_alarm_device(alarm_device_id: str):
+    await db.delete_camera(alarm_device_id)
+    return {"status": "success", "message": "Alarm device deleted"}
 
 @app.get("/api/get-rooms")
 async def get_rooms():
@@ -265,6 +299,11 @@ async def create_room(room_name: str = Query(None)):
 @app.put("/api/camera-to-room")
 async def assign_camera_room(camera_id: str = Query(None), room_id: str = Query(None)):
     await db.assign_camera_room(camera_id, room_id)
+    return {"status": "success", "message": "Camera assigned to room"}
+
+@app.put("/api/alarm-device-to-room")
+async def assign_alarm_device_room(alarm_device_id: str = Query(None), room_id: str = Query(None)):
+    await db.assign_alarm_device_room(alarm_device_id, room_id)
     return {"status": "success", "message": "Camera assigned to room"}
 
 
