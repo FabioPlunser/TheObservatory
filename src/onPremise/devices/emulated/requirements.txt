@@ -1,0 +1,9 @@
+aiohttp
+fastapi
+uvicorn
+websockets
+opencv-python
+starlette
+python-multipart
+pydantic
+asyncio

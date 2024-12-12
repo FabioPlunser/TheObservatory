@@ -1,0 +1,14 @@
+sqlalchemy
+aiosqlite
+fastapi
+websockets
+uvicorn
+opencv-python
+numpy
+torch
+ultralytics
+zeroconf
+python-multipart
+pydantic
+aiohttp
+greenlet

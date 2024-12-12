@@ -1,6 +1,6 @@
 <script lang="ts">
   import Cameras from "./Cameras.svelte";
-  import Alerts from "./Alerts.svelte";
+  import Alarms from "./Alarms.svelte";
   import Rooms from "./Rooms.svelte";
   import KnownFaces from "./KnownFaces.svelte";
   import Settings from "./Settings.svelte";
@@ -25,8 +25,8 @@
       icon: undefined,
     },
     {
-      name: "Alerts",
-      component: Alerts,
+      name: "Alarms",
+      component: Alarms,
       icon: undefined,
     },
     {

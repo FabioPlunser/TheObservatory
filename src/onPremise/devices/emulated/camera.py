@@ -5,10 +5,10 @@ import logging
 import socket 
 import asyncio
 import websockets
-from edge_server_discover import EdgeServerDiscovery
 import base64
-from datetime import datetime
 import json
+from datetime import datetime
+from edge_server_discover import EdgeServerDiscovery
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class Camera:
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{self.edge_server_url}/register", 
+                    f"{self.edge_server_url}/register/camera", 
                     json=registration_data, 
                     timeout=5
                 ) as response:

@@ -1,23 +1,46 @@
-from fastapi import FastAPI, WebSocket, HTTPException, Query
-from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
-import logging
-from typing import Dict
 import base64
-from zeroconf import ServiceInfo, Zeroconf
 import socket 
 import numpy as np 
 import cv2 
-from datetime import datetime
 import json
 import asyncio
+import torch 
+import platform
+import os
+from fastapi import FastAPI, WebSocket, HTTPException, Query
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+from typing import Dict
+from zeroconf import ServiceInfo, Zeroconf
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from database import Database
-
-
-
+from ultralytics import YOLO
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
+import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
+def get_device():
+    """Determine the best available device for inference"""
+    if torch.cuda.is_available():
+        return 'cuda'
+    elif platform.processor() == 'arm' and platform.system() == 'Darwin':  # Check for M1/M2
+        try:
+            if torch.backends.mps.is_available():
+                if not torch.backends.mps.is_built():
+                    logger.warning("MPS not built, falling back to CPU")
+                    return 'cpu'
+                logger.info("Using M1/M2 Metal GPU")
+                return 'mps'
+        except AttributeError:
+            logger.warning("torch.backends.mps not available, falling back to CPU")
+            return 'cpu'
+    return 'cpu'
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 
 class EdgeServer:
     def __init__(self):
@@ -29,7 +52,25 @@ class EdgeServer:
         self.service_info = None
         self.port = 8000
         self.executor = ThreadPoolExecutor(max_workers=1)
-
+        
+        # ---------------------------------------------------------------------------- 
+        # Initialize YOLO model 
+        self.device = get_device()
+        logger.info(f"Using device: {self.device} for YOLO inference")
+        
+        try:
+            self.model = YOLO('yolov8n.pt')
+            self.model.to(self.device)
+                
+            logger.info("YOLO model initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Error initializing YOLO model: {e}")
+            logger.warning("Falling back to CPU")
+            self.device = 'cpu'
+            self.model = YOLO('yolov8n.pt')
+    #----------------------------------------------------------------------------
+    #----------------------------------------------------------------------------
     async def start_mdns(self): 
         """Start mDNS service advertising asynchronously"""
         def register_service():
@@ -48,7 +89,7 @@ class EdgeServer:
                 addresses=[socket.inet_aton(local_ip)],
                 port=self.port,
                 properties=desc,
-                server=f"{hostname}.local."  # Add proper DNS-SD server name
+                server=f"{hostname}.local."  
             )
 
             try:
@@ -60,8 +101,8 @@ class EdgeServer:
 
         # Run the blocking operation in a thread pool
         await asyncio.get_event_loop().run_in_executor(self.executor, register_service)
-
-
+    #----------------------------------------------------------------------------
+    #----------------------------------------------------------------------------
     async def stop_mdns(self):
         """Stop mDNS service asynchronously"""
         def unregister_service():
@@ -74,26 +115,57 @@ class EdgeServer:
             await asyncio.get_event_loop().run_in_executor(self.executor, unregister_service)
         self.executor.shutdown(wait=False)
 
-    async def process_frame(self, camera_id: str, frame_data: str): 
-        """Process received frame - can add detection logic here"""
-        try: 
-            # Decode base64 frame 
-            jpg_data = base64.b64decode(frame_data)
-            nparr = np.frombuffer(jpg_data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-            if frame is None: 
-                logger.error("Failed to decode frame")
-                return
-
-            # Here we can add person detection 
+    #----------------------------------------------------------------------------
+    #----------------------------------------------------------------------------
+    async def process_frame(self, frame: np.ndarray):
+        """Process frame with YOLO detection using GPU"""
+        try:
+            # Run inference in thread pool to avoid blocking
+            results = await asyncio.get_event_loop().run_in_executor(
+                self.executor,
+                lambda: self.model(frame, device=self.device, verbose=False)
+            )
             
-            logger.debug(f"Received frame from camera {camera_id}")
-        except Exception as e: 
-            logger.error(f"Error processing frame: {e}")
+            detections = []
+            person_detected = False
+            
+            # Process results
+            for result in results:
+                boxes = result.boxes
+                for box in boxes:
+                    # Class 0 is person in COCO dataset
+                    if int(box.cls) == 0:
+                        person_detected = True
+                        conf = float(box.conf)
+                        x1, y1, x2, y2 = [int(x) for x in box.xyxy[0].tolist()]
+                        
+                        # Draw rectangle on frame
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(frame, f"Person {conf:.2f}", (x1, y1 - 10),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        
+                        detections.append({
+                            "confidence": conf,
+                            "box": [x1, y1, x2, y2]
+                        })
+            
+            # Encode processed frame
+            _, buffer = cv2.imencode('.jpg', frame)
+            processed_frame = base64.b64encode(buffer).decode('utf-8')
+            
+            return {
+                "frame": processed_frame,
+                "person_detected": person_detected,
+                "detections": detections
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in YOLO processing: {e}")
+            return None
 
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 edge_server = EdgeServer()
-
 async def check_camera_statuses():
     """Check all cameras and update their status if they haven't sent data in 2 minutes"""
     while True:
@@ -116,6 +188,7 @@ async def check_camera_statuses():
 @asynccontextmanager
 async def lifespan(app: FastAPI): 
     # Startup 
+    await db.init_db()  # Add this line
     await edge_server.start_mdns()
     asyncio.create_task(check_camera_statuses())
     logger.info("Edge server started")
@@ -123,11 +196,13 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await edge_server.stop_mdns()
     logger.info("Edge server stopped")
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 app = FastAPI(lifespan=lifespan)
-db = Database() 
-
-@app.post("/register")
+db = Database()
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
+@app.post("/register/camera")
 async def register_camera(registration_data: dict): 
     try:
         camera_id = registration_data["camera_id"]
@@ -155,8 +230,9 @@ async def register_camera(registration_data: dict):
     except Exception as e:
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=500, detail="Registration failed")
-
-@app.post("/register-alarm")
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
+@app.post("/register/alarm")
 async def register_alarm(registration_data: dict):
     try:
         alarm_id = registration_data["alarm_id"]
@@ -182,7 +258,8 @@ async def register_alarm(registration_data: dict):
     except Exception as e:
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=500, detail="Registration failed")
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.websocket("/ws/camera/{camera_id}")
 async def camera_websocket(websocket: WebSocket, camera_id: str):
     if camera_id not in edge_server.cameras:
@@ -208,52 +285,40 @@ async def camera_websocket(websocket: WebSocket, camera_id: str):
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
 
-            # Process frame asynchronously
-            # if frame is not None: 
-            #     results = model(frame)
-            #     person_detected = False 
-            #     detections = []
+            if frame is not None:
+                # Process frame with YOLO
+                processed_data = await edge_server.process_frame(frame)
+                
+                if processed_data:
+                    frame_data.update(processed_data)
+                    
+                    if processed_data["person_detected"]:
+                        pass
+                        # logger.info(f"Person detected in frame from camera {camera_id} "
+                        #           f"with {len(processed_data['detections'])} detections")
 
-            #     for result in results: 
-            #         boxes = result.boxes 
-            #         for box in boxes: 
-            #             if int(box.cls) == 0: 
-            #                 person_detected = True 
-
-            #                 conf = float(box.conf)
-            #                 x1, y1, x2, y2 = box.xyxy.tolist() 
-            #                 detections.append({
-            #                     "confidence": conf,
-            #                     "box": [x1, y1, x2, y2]
-            #                 })
-
-            #     frame_data["person_detected"] = person_detected
-            #     frame_data["detections"] = detections
-
-            #     if person_detected: 
-            #         logger.info(f"Person detected in frame from camera {camera_id}")
-
-
-            # Broadcast frame to all viewers of this camera
-            if camera_id in edge_server.viewers:
-                frame_message = json.dumps({
-                    "camera_id": camera_id,
-                    "timestamp": frame_data["timestamp"],
-                    "frame": frame_data["frame"]
-                })
-                for viewer in edge_server.viewers[camera_id].copy():
-                    try:
-                        await viewer.send_text(frame_message)
-                    except Exception:
-                        edge_server.viewers[camera_id].remove(viewer)
+                    # Broadcast processed frame to viewers
+                    if camera_id in edge_server.viewers:
+                        frame_message = json.dumps({
+                            "camera_id": camera_id,
+                            "timestamp": frame_data["timestamp"],
+                            "frame": processed_data["frame"],
+                            "detections": processed_data["detections"]
+                        })
+                        
+                        for viewer in edge_server.viewers[camera_id].copy():
+                            try:
+                                await viewer.send_text(frame_message)
+                            except Exception:
+                                edge_server.viewers[camera_id].remove(viewer)
                         
     except Exception as e:
         logger.error(f"Camera websocket error: {e}")
     finally:
         edge_server.active_connections.pop(camera_id)
         logger.info(f"Camera WebSocket connection closed for camera {camera_id}")
-
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.get("/cameras")
 async def get_cameras():
     """Get list of connected cameras"""
@@ -268,45 +333,58 @@ async def get_cameras():
             for camera_id, data in edge_server.cameras.items()
         ]
     }
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.get("/api/get-cameras")
 async def get_cameras_api(): 
     return await db.get_cameras()
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
+@app.get("/api/get-alarms")
+async def get_alarms(): 
+    return await db.get_alarms()
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.get("/api/get-alarm-devices")
 async def get_alarm_devices_api():
     return await db.get_alarm_devices()
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.post("/api/delete-camera/{camera_id}")
 async def delete_camera(camera_id: str):
     await db.delete_camera(camera_id)
     return {"status": "success", "message": "Camera deleted"}
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.post("/api/delete-alarm_device/{alarm_device_id}")
 async def delete_alarm_device(alarm_device_id: str):
     await db.delete_camera(alarm_device_id)
     return {"status": "success", "message": "Alarm device deleted"}
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.get("/api/get-rooms")
 async def get_rooms():
     return await db.get_rooms()
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.post("/api/create-room")
 async def create_room(room_name: str = Query(None)):
     await db.create_room(room_name)
     return {"status": "success", "message": "Room created"}
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.put("/api/camera-to-room")
 async def assign_camera_room(camera_id: str = Query(None), room_id: str = Query(None)):
     await db.assign_camera_room(camera_id, room_id)
     return {"status": "success", "message": "Camera assigned to room"}
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.put("/api/alarm-device-to-room")
 async def assign_alarm_device_room(alarm_device_id: str = Query(None), room_id: str = Query(None)):
     await db.assign_alarm_device_room(alarm_device_id, room_id)
     return {"status": "success", "message": "Camera assigned to room"}
-
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 @app.websocket("/ws/view/{camera_id}")
 async def viewer_websocket(websocket: WebSocket, camera_id: str):
     if camera_id not in edge_server.cameras:
@@ -330,9 +408,12 @@ async def viewer_websocket(websocket: WebSocket, camera_id: str):
         edge_server.viewers[camera_id].remove(websocket)
         if not edge_server.viewers[camera_id]:
             edge_server.viewers.pop(camera_id)
-
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
 # After all API endpoints are defined, serve the static website
-app.mount("/", StaticFiles(directory="website/build", html=True), name="static")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BUILD_DIR = os.path.join(BASE_DIR, "website", "build")
+app.mount("/", StaticFiles(directory=BUILD_DIR, html=True), name="static")
 if __name__ == "__main__":
     import uvicorn 
     uvicorn.run(app, host="0.0.0.0", port=8000)

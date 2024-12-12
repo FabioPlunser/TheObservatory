@@ -18,7 +18,10 @@
 *.nav
 *.snm
 *.vrb
+*.pt
+*.db
 
+venv
 
 # Generated PDFs (uncomment if you don't want to track PDFs)
 *.pdf
