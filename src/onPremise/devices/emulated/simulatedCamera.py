@@ -1,46 +1,31 @@
 import os
-import requests
-import cv2
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from requests.adapters import HTTPAdapter
 from camera import Camera
+import logging
 
-def send_frame(camera, jpeg, session):
-    try:
-        response = session.post(
-            f"{camera.edge_server_url}/frame",
-            files={'frame': ('frame.jpg', jpeg.tobytes(), 'image/jpeg')},
-            data={'camera_id': camera.camera_id},
-            timeout=5  
-        )
-        response.raise_for_status()
-    except requests.RequestException as e:
-        print(f"Error sending frame: {e}")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def start_simulated_camera(video_path, session):
-    print(f"Attempting to open video: {video_path}")
-    camera = Camera(video_path=video_path)
-    if not camera.start():
+async def start_simulated_camera(video_path):
+    camera = Camera()
+    
+    if not await camera.discover_edge_server():
+        print("Failed to discover edge server")
         return
 
-    while True:
-        ret, frame = camera.cap.read()
-        if not ret:
-            print(f"Failed to read frame from video: {video_path}")
-            break
+    if not await camera.register_with_edge():
+        print("Failed to register with edge server")
+        return
 
-        _, jpeg = cv2.imencode('.jpg', frame)
+    await camera.start_streaming(video_path=video_path)
+    await camera.stop()
 
-        send_frame(camera, jpeg, session)
-
-    camera.stop()
+def run_camera_in_thread(video_path):
+    asyncio.run(start_simulated_camera(video_path))
 
 def main():
     dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data/video_sets'))
-
-    session = requests.Session()
-    adapter = HTTPAdapter(max_retries=2)
-    session.mount('http://', adapter)
 
     with ThreadPoolExecutor(max_workers=6) as executor:
         camera_count = 0
@@ -53,7 +38,7 @@ def main():
                 video_path = os.path.join(dataset_dir, f'set_{set_num}', f'video{set_num}_{i}.avi')
                 if os.path.exists(video_path):
                     print(f"Starting simulated camera {camera_count + 1} with video: {video_path}")
-                    executor.submit(start_simulated_camera, video_path, session)
+                    executor.submit(run_camera_in_thread, video_path)
                     camera_count += 1
                     if camera_count >= 6:
                         break

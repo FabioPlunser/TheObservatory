@@ -68,14 +68,17 @@ class Camera:
             logger.error(f"Registration failed: {e}")
             return False
 
-    async def start_streaming(self): 
+    async def start_streaming(self, video_path=None): 
         """Start camera and stream to edge server"""
         if not self.edge_server_url:
             logger.error("No edge server URL available")
             return
 
         try: 
-            self.cap = cv2.VideoCapture(0)
+            if video_path: 
+                self.cap = cv2.VideoCapture(video_path)
+            else:
+                self.cap = cv2.VideoCapture(0)
             if not self.cap.isOpened(): 
                 raise RuntimeError("Could not open camera")
             
