@@ -35,6 +35,14 @@ class Database:
               FOREIGN KEY (camera_id) REFERENCES cameras(id)
               FOREIGN KEY (room_id) REFERENCES rooms(id)
           );
+          
+          CREATE TABLE IF NOT EXISTS alarm_devices (
+              id TEXT PRIMARY KEY,
+              name TEXT,
+              room_id INTEGER,
+              timestamp TIMESTAMP,
+              FOREIGN KEY (room_id) REFERENCES rooms(id)
+          );
       """)
 
 
@@ -108,7 +116,16 @@ class Database:
           WHERE id = ?
       """, (room_id, camera_id))
       await db.commit()
-    
+
+    async def assign_alarm_device_room(self, alarm_device_id: int, room_id: int):
+      async with aiosqlite.connect(self.db_path) as db:
+        await db.execute("""
+            UPDATE alarm_devices 
+            SET room_id = ?
+            WHERE id = ?
+        """, (room_id, alarm_device_id))
+        await db.commit()
+
   async def get_camera_room(self, camera_id: int):
     async with aiosqlite.connect(self.db_path) as db:
       async with db.execute("""
@@ -134,3 +151,33 @@ class Database:
       db.row_factory = aiosqlite.Row
       async with db.execute("SELECT * FROM alarm WHERE room_id = ?", (room_id,)) as cursor: 
         return [dict(row) for row in await cursor.fetchall()]
+
+
+  async def create_alarm_device(self, alarm_device_id: str, name: str, status: str):
+    async with aiosqlite.connect(self.db_path) as db:
+      await db.execute("""
+          INSERT INTO alarm_devices (id, name)
+          VALUES (?, ?)
+      """, (alarm_device_id, name))
+      await db.commit()
+
+  async def delete_alarm_device(self, alarm_device_id: str):
+    async with aiosqlite.connect(self.db_path) as db:
+      await db.execute("""
+          DELETE FROM alarm_devices
+          WHERE id = ?
+      """, (alarm_device_id,))
+      await db.commit()
+
+  async def get_alarm_devices(self) -> List[dict]:
+    async with aiosqlite.connect(self.db_path) as db:
+      db.row_factory = aiosqlite.Row
+      async with db.execute("SELECT * FROM alarm_devices") as cursor:
+        return [dict(row) for row in await cursor.fetchall()]
+
+  async def get_alarm_device(self, alarm_device_id: str) -> Optional[Dict]:
+    async with aiosqlite.connect(self.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM alarm_devices WHERE id = ?", (alarm_device_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
