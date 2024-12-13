@@ -2,7 +2,6 @@ import cv2
 import uuid
 import aiohttp
 import logging
-import socket 
 import asyncio
 import websockets
 import base64
@@ -13,42 +12,42 @@ from edge_server_discover import EdgeServerDiscovery
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class Camera: 
+class Camera:
     def __init__(self):
         self.camera_id = str(uuid.uuid4())
-        self.edge_server_url = None 
-        self.cap = None 
-        self.is_running = False 
+        self.edge_server_url = None
+        self.cap = None
+        self.is_running = False
         self.discovery = EdgeServerDiscovery()
-        self.reconnect_delay = 5 
+        self.reconnect_delay = 5
         self.frame_rate = 30
         self.frame_interval = 1.0
         self.frame_width = 1920
         self.frame_height = 1080
 
-    async def discover_edge_server(self): 
+    async def discover_edge_server(self):
         """Discover edge server"""
         logger.info("Starting edge server discovery")
         self.edge_server_url = await self.discovery.discover_edge_server()
-        
+
         if not self.edge_server_url:
             logger.error("Failed to discover edge server")
             return False
         logger.info(f"Successfully discovered edge server at {self.edge_server_url}")
         return True
 
-    async def register_with_edge(self): 
+    async def register_with_edge(self):
         """Register camera with edge server"""
         if not self.edge_server_url:
             logger.error("No edge server URL available")
             return False
 
-        try: 
+        try:
             registration_data = {
                 "camera_id": self.camera_id,
-                "name": f"Camera {self.camera_id[:8]}", 
+                "name": f"Camera {self.camera_id[:8]}",
                 "capabilities": {
-                    "resolution": f"{self.frame_width}x{self.frame_height}", 
+                    "resolution": f"{self.frame_width}x{self.frame_height}",
                     "fps": self.frame_rate,
                     "night_vision": False
                 }
@@ -56,89 +55,94 @@ class Camera:
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{self.edge_server_url}/register/camera", 
-                    json=registration_data, 
+                    f"{self.edge_server_url}/register/camera",
+                    json=registration_data,
                     timeout=5
                 ) as response:
-                    await response.json()
-                    logger.info(f"Camera {self.camera_id} registered successfully")
-                    return True
+                    if response.status == 200:
+                        await response.json()
+                        logger.info(f"Camera {self.camera_id} registered successfully")
+                        return True
+                    else:
+                        logger.error(f"Registration failed with status {response.status}")
+                        return False
 
-        except Exception as e: 
+        except Exception as e:
             logger.error(f"Registration failed: {e}")
             return False
 
-    async def start_streaming(self, video_path=None): 
+    async def start_streaming(self, video_path=None, stop_event=None):
         """Start camera and stream to edge server"""
         if not self.edge_server_url:
             logger.error("No edge server URL available")
             return
 
-        try: 
-            if video_path: 
+        try:
+            if video_path:
                 self.cap = cv2.VideoCapture(video_path)
             else:
                 self.cap = cv2.VideoCapture(0)
-            if not self.cap.isOpened(): 
+            if not self.cap.isOpened():
                 raise RuntimeError("Could not open camera")
-            
+
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
             self.cap.set(cv2.CAP_PROP_FPS, self.frame_rate)
 
             ws_url = self.edge_server_url.replace("http://", "ws://") + f"/ws/camera/{self.camera_id}"
             logger.info(f"Connecting to WebSocket at {ws_url}")
-            
-            async with websockets.connect(ws_url) as websocket: 
-                logger.info("WebSocket connection established")
-                self.is_running = True 
 
-                while self.is_running: 
-                    ret, frame = self.cap.read() 
-                    if not ret: 
-                        continue 
-                
-                    _, buffer = cv2.imencode(".jpg", frame)  
+            async with websockets.connect(ws_url) as websocket:
+                logger.info("WebSocket connection established")
+                self.is_running = True
+
+                while self.is_running and (stop_event is None or not stop_event.is_set()):
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        continue
+
+                    _, buffer = cv2.imencode(".jpg", frame)
                     frame_data = base64.b64encode(buffer).decode("utf-8")
 
-                    try: 
+                    try:
                         await websocket.send(json.dumps({
-                            "camera_id": self.camera_id, 
-                            "timestamp": datetime.now().isoformat(), 
+                            "camera_id": self.camera_id,
+                            "timestamp": datetime.now().isoformat(),
                             "frame": frame_data
                         }))
-                    except Exception as e: 
+                    except Exception as e:
                         logger.error(f"Failed to send frame: {e}")
                         break
 
-                    await asyncio.sleep(1/self.frame_rate)
-        except Exception as e: 
+                    await asyncio.sleep(1 / self.frame_rate)
+        except Exception as e:
             logger.error(f"Streaming error: {e}")
-        finally: 
+        finally:
             if self.cap:
                 self.cap.release()
-    
-    async def stop(self): 
+            self.is_running = False
+
+    async def stop(self):
         """Stop the camera"""
-        self.is_running = False 
-        if self.cap: 
-            self.cap.release() 
+        self.is_running = False
+        if self.cap:
+            self.cap.release()
 
 async def main():
     camera = Camera()
-    try: 
+    try:
         if not await camera.discover_edge_server():
             logger.error("No edge server found")
-            return 
+            return
 
-        if await camera.register_with_edge(): 
-            await camera.start_streaming() 
-    except KeyboardInterrupt: 
+        if await camera.register_with_edge():
+            await camera.start_streaming()
+    except KeyboardInterrupt:
         logger.info("Shutting down camera...")
     except Exception as e:
         logger.error(f"Camera error: {e}")
-    finally: 
+    finally:
         await camera.stop()
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     asyncio.run(main())

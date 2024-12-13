@@ -11,16 +11,15 @@ async def start_simulated_camera(video_path, stop_event):
     camera = Camera()
     
     if not await camera.discover_edge_server():
-        print("Failed to discover edge server")
+        logger.error("Failed to discover edge server")
         return
 
     if not await camera.register_with_edge():
-        print("Failed to register with edge server")
+        logger.error("Failed to register with edge server")
         return
 
     try:
-        while not stop_event.is_set():
-            await camera.start_streaming(video_path=video_path)
+        await camera.start_streaming(video_path=video_path, stop_event=stop_event)
     finally:
         await camera.stop()
 
@@ -44,7 +43,7 @@ def main():
                 continue
             video_path = os.path.join(dataset_dir, f'set_{set_num}', f'video{set_num}_{i}.avi')
             if os.path.exists(video_path):
-                print(f"Starting simulated camera {camera_count + 1} with video: {video_path}")
+                logger.info(f"Starting simulated camera {camera_count + 1} with video: {video_path}")
                 stop_event = Event()
                 stop_events.append(stop_event)
                 process = Process(target=run_camera_in_process, args=(video_path, stop_event))
@@ -60,7 +59,7 @@ def main():
         while True:
             pass
     except KeyboardInterrupt:
-        print("Stopping all cameras...")
+        logger.info("Stopping all cameras...")
         for stop_event in stop_events:
             stop_event.set()
         for process in processes:

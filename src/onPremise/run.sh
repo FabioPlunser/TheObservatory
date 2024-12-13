@@ -41,6 +41,12 @@ source venv/bin/activate
 # Get number of devices to emulate
 read -p "Enter number of cameras to emulate: " num_cameras
 read -p "Enter number of alarms to emulate: " num_alarms
+read -p "Do you want to use simulated data? (y/n): " use_simulated_data
+if [ "$use_simulated_data" = "y" ]; then
+    use_simulated_data=true
+else
+    use_simulated_data=false
+fi
 
 # Start frontend setup
 animate_loading "Setting up frontend..." &
@@ -88,14 +94,24 @@ sleep 5
 
 # Start emulated cameras
 echo "📸 Starting $num_cameras camera(s)..."
+camera_pids=()
 for (( i=1; i<=$num_cameras; i++ ))
 do
     python devices/emulated/camera.py &
     camera_pids+=($!)
 done
 
+# Start simulated cameras
+if [ "$use_simulated_data" = true ]; then
+    echo "📸 Starting simulated cameras ..."
+    # Start in a new process group
+    setsid python devices/emulated/simulatedCamera.py &
+    simulated_camera_pid=$!
+fi
+
 # Start emulated alarms
 echo "🚨 Starting $num_alarms alarm(s)..."
+alarm_pids=()
 for (( i=1; i<=$num_alarms; i++ ))
 do
     python devices/emulated/alarm.py &
@@ -115,6 +131,11 @@ cleanup() {
     for pid in "${alarm_pids[@]}"; do
         kill $pid 2>/dev/null || true
     done
+    # Kill simulated camera process group
+    if [ "$use_simulated_data" = true ]; then
+        # Kill the entire process group
+        kill -- -$simulated_camera_pid 2>/dev/null || true
+    fi
     # Kill server
     kill $server_pid 2>/dev/null || true
     
