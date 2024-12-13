@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 # Exit on error
 set -e
 
@@ -8,12 +7,31 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Animated loading function with better process handling
+animate_loading() {
+    local message=$1
+    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local delay=0.1
+    local i=0
+    
+    while kill -0 $PPID 2>/dev/null; do
+        printf "\r${frames:i++%${#frames}:1} %s" "$message"
+        sleep $delay
+    done
+}
+
+cleanup_spinner() {
+    kill $spinner_pid 2>/dev/null || true
+    wait $spinner_pid 2>/dev/null || true
+    printf "\r%s\n" "$1"
+}
+
 echo "🚀 Starting setup script..."
 
 # Create and activate Python virtual environment
 if [ ! -d "venv" ]; then
     echo "🐍 Creating Python virtual environment..."
-    python3 -m venv venv
+    python3 -m venv venv >/dev/null 2>&1
 fi
 
 # Activate virtual environment
@@ -24,30 +42,40 @@ source venv/bin/activate
 read -p "Enter number of cameras to emulate: " num_cameras
 read -p "Enter number of alarms to emulate: " num_alarms
 
-# Check for bun or npm and install dependencies
+# Start frontend setup
+animate_loading "Setting up frontend..." &
+spinner_pid=$!
+
+# Install frontend dependencies
 if command_exists bun; then
-    echo "🔧 Installing frontend dependencies with bun..."
-    cd server/website
-    bun install
-    bun run build
-    cd ../..
+    (cd server/website && bun install && bun run build) >/dev/null 2>&1 && \
+    cleanup_spinner "✅ Frontend setup complete!" || {
+        cleanup_spinner "❌ Frontend setup failed!"
+        exit 1
+    }
 elif command_exists npm; then
-    echo "🔧 Installing frontend dependencies with npm..."
-    cd server/website
-    npm install
-    npm run build
-    cd ../..
+    (cd server/website && npm install && npm run build) >/dev/null 2>&1 && \
+    cleanup_spinner "✅ Frontend setup complete!" || {
+        cleanup_spinner "❌ Frontend setup failed!"
+        exit 1
+    }
 else
-    echo "❌ Neither bun nor npm found. Please install one of them."
+    cleanup_spinner "❌ Neither bun nor npm found. Please install one of them."
     exit 1
 fi
 
-# Install Python requirements
-echo "📦 Installing server requirements..."
-pip install -r server/requirements.txt
+# Start Python dependencies installation
+animate_loading "Installing Python dependencies..." &
+spinner_pid=$!
 
-echo "📦 Installing emulated devices requirements..."
-pip install -r devices/emulated/requirements.txt
+# Install Python requirements
+{
+    pip install -r server/requirements.txt >/dev/null 2>&1
+    pip install -r devices/emulated/requirements.txt >/dev/null 2>&1
+} && cleanup_spinner "✅ Python dependencies installed!" || {
+    cleanup_spinner "❌ Python dependencies installation failed!"
+    exit 1
+}
 
 # Start the server in the background
 echo "🖥️ Starting edge server..."
@@ -77,6 +105,8 @@ done
 # Trap SIGINT and SIGTERM signals
 cleanup() {
     echo "🛑 Stopping all processes..."
+    # Kill any remaining spinner
+    kill $spinner_pid 2>/dev/null || true
     # Kill camera processes
     for pid in "${camera_pids[@]}"; do
         kill $pid 2>/dev/null || true
@@ -89,10 +119,8 @@ cleanup() {
     kill $server_pid 2>/dev/null || true
     
     echo "👋 Cleanup complete"
-    exit 0
-
     rm -rf db.db 
-
+    exit 0
 }
 
 trap cleanup SIGINT SIGTERM

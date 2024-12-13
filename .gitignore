@@ -21,7 +21,6 @@
 *.pt
 *.db
 
-venv
 
 # Generated PDFs (uncomment if you don't want to track PDFs)
 *.pdf
@@ -41,3 +40,7 @@ data
 __pycache__/
 .venv
 src/onPremise/server/website/bun.lockb
+venv
+
+
+.DS_Store

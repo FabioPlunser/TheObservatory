@@ -59,7 +59,7 @@ class AlarmDevice(Base):
 
 class Database:
     def __init__(self, db_url="sqlite+aiosqlite:///db.db"):
-        self.engine = create_async_engine(db_url, echo=True)
+        self.engine = create_async_engine(db_url)
         self.async_session = sessionmaker(
             self.engine, class_=AsyncSession, expire_on_commit=False
         )

@@ -26,19 +26,12 @@ logger = logging.getLogger(__name__)
 def get_device():
     """Determine the best available device for inference"""
     if torch.cuda.is_available():
+        logger.info("Using CUDA for YOLO inference")
         return 'cuda'
-    elif platform.processor() == 'arm' and platform.system() == 'Darwin':  # Check for M1/M2
-        try:
-            if torch.backends.mps.is_available():
-                if not torch.backends.mps.is_built():
-                    logger.warning("MPS not built, falling back to CPU")
-                    return 'cpu'
-                logger.info("Using M1/M2 Metal GPU")
-                return 'mps'
-        except AttributeError:
-            logger.warning("torch.backends.mps not available, falling back to CPU")
-            return 'cpu'
-    return 'cpu'
+    if torch.backends.mps.is_available(): 
+        logger.info("Using MPS for YOLO inference")
+        return 'mps'
+    return "cpu"
 #----------------------------------------------------------------------------
 #----------------------------------------------------------------------------
 

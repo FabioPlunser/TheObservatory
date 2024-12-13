@@ -9,10 +9,11 @@
   import Icon from "@iconify/svelte";
   import { persistentStore } from "$lib/helper/store.svelte";
   import { getState } from "$lib/helper/globalState.svelte";
+  import { persistentState } from "$lib/helper/persistentState.svelte";
   // -------------------------------------------------------------------
   // -------------------------------------------------------------------
   const theme = persistentStore("theme", "light");
-  let currentPage = getState<currentPageType>("currentPage", {
+  let currentPage = persistentState("currentPage", {
     name: "Cameras",
     component: Cameras,
   });
