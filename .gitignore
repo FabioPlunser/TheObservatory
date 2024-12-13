@@ -38,8 +38,6 @@
 data
 
 __pycache__/
-.venv
-src/onPremise/server/website/bun.lockb
 venv
 
 
