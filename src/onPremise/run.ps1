@@ -52,13 +52,14 @@ Register-EngineEvent PowerShell.Exiting -Action { cleanup }
 Write-Host "🚀 Starting setup script..."
 
 # Create and activate Python virtual environment
-if (-Not (Test-Path -Path "venv")) {
+$venv_path = "venvWin"
+if (-Not (Test-Path -Path $venv_path)) {
     Write-Host "🐍 Creating Python virtual environment..."
-    python -m venv venv
+    python -m venv $venv_path
 }
 
 Write-Host "🔄 Activating virtual environment..."
-& .\venv\Scripts\Activate.ps1
+& "$venv_path\Scripts\Activate.ps1"
 
 # Calculate checksum of requirements files
 $requirements_files = @("server/requirements.txt", "devices/emulated/requirements.txt")
