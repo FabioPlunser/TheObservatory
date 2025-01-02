@@ -89,6 +89,9 @@ class Camera:
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
             self.cap.set(cv2.CAP_PROP_FPS, self.frame_rate)
 
+            actual_frame_rate = self.cap.get(cv2.CAP_PROP_FPS)
+            frame_skip = int(actual_frame_rate / self.frame_rate)
+
             ws_url = self.edge_server_url.replace("http://", "ws://") + f"/ws/camera/{self.camera_id}"
             logger.info(f"Connecting to WebSocket at {ws_url}")
 
@@ -97,11 +100,17 @@ class Camera:
                 self.is_running = True
 
                 while self.is_running and (stop_event is None or not stop_event.is_set()):
+                    for _ in range(frame_skip):
+                        self.cap.grab()  # Skip frames
+
                     ret, frame = self.cap.read()
                     if not ret:
                         continue
 
-                    _, buffer = cv2.imencode(".jpg", frame)
+                    # Resize frame to reduce data size
+                    frame = cv2.resize(frame, (self.frame_width // 2, self.frame_height // 2))
+
+                    _, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])  # Reduce quality to 50%
                     frame_data = base64.b64encode(buffer).decode("utf-8")
 
                     try:

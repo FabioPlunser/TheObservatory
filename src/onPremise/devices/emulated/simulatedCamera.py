@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 async def start_simulated_camera(video_path, stop_event):
     camera = Camera()
+    camera.frame_rate = 1
     
     if not await camera.discover_edge_server():
         logger.error("Failed to discover edge server")
@@ -30,6 +31,9 @@ def run_camera_in_process(video_path, stop_event):
 
 def main():
     dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data/video_sets'))
+    if not os.path.exists(dataset_dir):
+        logger.error("Dataset not found")
+        return
 
     stop_events = []
     processes = []
