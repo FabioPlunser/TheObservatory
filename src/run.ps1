@@ -51,6 +51,70 @@ Register-EngineEvent PowerShell.Exiting -Action { cleanup }
 
 Write-Host "🚀 Starting setup script..."
 
+# Prompt the user to launch the Terraform server
+$launch_terraform = Read-Host "Do you want to launch the Terraform server? (y/n)"
+if ($launch_terraform -eq "y") {
+    # Check if AWS credentials file exists
+    $aws_credentials_path = "$env:USERPROFILE\.aws\credentials"
+    $aws_credentials_exist = Test-Path -Path $aws_credentials_path
+
+    if (-Not $aws_credentials_exist) {
+        Write-Host "AWS credentials file not found. Prompting for credentials..."
+        $aws_access_key = Read-Host "Enter your AWS Access Key"
+        $aws_secret_key = Read-Host "Enter your AWS Secret Key"
+        $aws_region = Read-Host "Enter your AWS Region (e.g., us-east-1)"
+
+        # Configure AWS CLI with the provided credentials
+        aws configure set aws_access_key_id $aws_access_key
+        aws configure set aws_secret_access_key $aws_secret_key
+        aws configure set region $aws_region
+    } else {
+        Write-Host "AWS credentials file found. Checking for credentials..."
+
+        # Read the credentials file
+        $credentials_content = Get-Content -Path $aws_credentials_path -Raw
+
+        # Check if the credentials are present
+        if ($credentials_content -notmatch "aws_access_key_id" -or $credentials_content -notmatch "aws_secret_access_key") {
+            Write-Host "AWS credentials not found in the file. Prompting for credentials..."
+            $aws_access_key = Read-Host "Enter your AWS Access Key"
+            $aws_secret_key = Read-Host "Enter your AWS Secret Key"
+            $aws_region = Read-Host "Enter your AWS Region (e.g., us-east-1)"
+
+            # Configure AWS CLI with the provided credentials
+            aws configure set aws_access_key_id $aws_access_key
+            aws configure set aws_secret_access_key $aws_secret_key
+            aws configure set region $aws_region
+        } else {
+            Write-Host "AWS credentials found in the file."
+        }
+    }
+    # Check if the key pair exists
+    $key_pair_name = "theObservatory"
+    $key_pair_exists = aws ec2 describe-key-pairs --key-names $key_pair_name 2>&1 | Select-String -Pattern $key_pair_name
+
+    if (-Not $key_pair_exists) {
+        Write-Host "Key pair '$key_pair_name' not found. Creating key pair..."
+        $key_pair_path = "$env:USERPROFILE\.ssh\theObservatory.pem"
+        aws ec2 create-key-pair --key-name $key_pair_name --query "KeyMaterial" --output text | Out-File -FilePath $key_pair_path -Encoding ascii
+        Write-Host "Key pair created and saved to $key_pair_path"
+    } else {
+        Write-Host "Key pair '$key_pair_name' found."
+        $key_pair_path = "$env:USERPROFILE\.ssh\theObservatory.pem"
+    }
+
+    Write-Host "🌍 Initializing Terraform..."
+    Push-Location "terraform"
+    terraform init
+
+    Write-Host "🚀 Applying Terraform configuration..."
+    terraform apply -var "private_pem_key=$key_pair_path" -auto-approve
+    Pop-Location
+} else {
+    Write-Host "🚫 Skipping Terraform server launch."
+}
+
+
 # Create and activate Python virtual environment
 $venv_path = "venvWin"
 if (-Not (Test-Path -Path $venv_path)) {
@@ -62,7 +126,7 @@ Write-Host "🔄 Activating virtual environment..."
 & "$venv_path\Scripts\Activate.ps1"
 
 # Calculate checksum of requirements files
-$requirements_files = @("server/requirements.txt", "devices/emulated/requirements.txt")
+$requirements_files = @("onPremise/server/requirements.txt", "onPremise/devices/emulated/requirements.txt", "cloud/requirements.txt")
 $checksum = Get-FileHash -Algorithm SHA256 -Path $requirements_files | ForEach-Object { $_.Hash } | Join-String -Separator ""
 $checksum_file = "requirements_checksum.txt"
 
@@ -80,8 +144,9 @@ if (-Not (Test-Path -Path $checksum_file)) {
 # Install Python requirements if needed
 if ($run_pip_install) {
     Write-Host "📦 Installing required Python packages..."
-    pip install -r server/requirements.txt
-    pip install -r devices/emulated/requirements.txt
+    pip install -r onPremise/server/requirements.txt
+    pip install -r onPremise/devices/emulated/requirements.txt
+    pip install -r cloud/requirements.txt
     $checksum | Set-Content -Path $checksum_file -NoNewline
 } else {
     Write-Host "📦 Python packages are already up-to-date."
@@ -98,14 +163,14 @@ $spinner = Start-Job -ScriptBlock { animate_loading "Setting up frontend..." }
 
 # Install frontend dependencies
 if (command_exists bun) {
-    Push-Location server/website
+    Push-Location onPremise/server/website
     bun install
     bun run build
     Pop-Location
     Stop-Job $spinner
     Write-Host "✅ Frontend setup complete!"
 } elseif (command_exists npm) {
-    Push-Location server/website
+    Push-Location onPremise/server/website
     npm install
     npm run build
     Pop-Location
@@ -119,7 +184,7 @@ if (command_exists bun) {
 
 # Start the server in the background
 Write-Host "🖥️ Starting edge server..."
-$server_process = Start-Process -FilePath "python" -ArgumentList "server/edge_server.py" -PassThru
+$server_process = Start-Process -FilePath "python" -ArgumentList "onPremise/server/edge_server.py" -PassThru
 $global:server_pid = $server_process.Id
 
 # Wait for server to start
@@ -130,14 +195,14 @@ Start-Sleep -Seconds 5
 Write-Host "📸 Starting $num_cameras camera(s)..."
 $global:camera_pids = @()
 for ($i = 1; $i -le $num_cameras; $i++) {
-    $camera_process = Start-Process -FilePath "python" -ArgumentList "devices/emulated/camera.py" -PassThru
+    $camera_process = Start-Process -FilePath "python" -ArgumentList "onPremise/devices/emulated/camera.py" -PassThru
     $global:camera_pids += $camera_process.Id
 }
 
 # Start simulated cameras
 if ($use_simulated_data) {
     Write-Host "📸 Starting simulated cameras ..."
-    $simulated_camera_process = Start-Process -FilePath "python" -ArgumentList "devices/emulated/simulatedCamera.py" -PassThru
+    $simulated_camera_process = Start-Process -FilePath "python" -ArgumentList "onPremise/devices/emulated/simulatedCamera.py" -PassThru
     $global:simulated_camera_pid = $simulated_camera_process.Id
 }
 
@@ -145,7 +210,7 @@ if ($use_simulated_data) {
 Write-Host "🚨 Starting $num_alarms alarm(s)..."
 $global:alarm_pids = @()
 for ($i = 1; $i -le $num_alarms; $i++) {
-    $alarm_process = Start-Process -FilePath "python" -ArgumentList "devices/emulated/alarm.py" -PassThru
+    $alarm_process = Start-Process -FilePath "python" -ArgumentList "onPremise/devices/emulated/alarm.py" -PassThru
     $global:alarm_pids += $alarm_process.Id
 }
 

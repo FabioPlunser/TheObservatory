@@ -43,4 +43,4 @@ venvWin
 
 
 .DS_Store
-src/onPremise/requirements_checksum.txt
+requirements_checksum.txt
