@@ -1,8 +1,8 @@
 # EC2-Instanz
-resource "aws_instance" "connect4_instance" {
+resource "aws_instance" "nats_instance" {
   ami                   = "ami-06b21ccaeff8cd686"
   instance_type         = "t2.micro"
-  key_name              = "connect4"
+  key_name              = "theObservatory"
   vpc_security_group_ids = [aws_security_group.theObservatory_sg.id]
 
 
