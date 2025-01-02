@@ -265,6 +265,41 @@ async def camera_websocket(websocket: WebSocket, camera_id: str):
     edge_server.cameras[camera_id]["status"] = "online"
     await db.update_camera_status(camera_id, "online")
     logger.info(f"Camera WebSocket connection established for camera {camera_id}")
+    
+    async def process_frame_data(frame_data):
+        jpg_data = base64.b64decode(frame_data["frame"])
+        nparr = np.frombuffer(jpg_data, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if frame is not None:
+            # Resize frame to reduce processing load
+            frame = cv2.resize(frame, (frame.shape[1] // 2, frame.shape[0] // 2))
+            # Process frame with YOLO
+            processed_data = await edge_server.process_frame(frame)
+            
+            if processed_data:
+                frame_data.update(processed_data)
+                
+                if processed_data["person_detected"]:
+                    pass
+                    # logger.info(f"Person detected in frame from camera {camera_id} "
+                    #           f"with {len(processed_data['detections'])} detections")
+
+                # Broadcast processed frame to viewers
+                if camera_id in edge_server.viewers:
+                    frame_message = json.dumps({
+                        "camera_id": camera_id,
+                        "timestamp": frame_data["timestamp"],
+                        "frame": processed_data["frame"],
+                        "detections": processed_data["detections"]
+                    })
+                    
+                    for viewer in edge_server.viewers[camera_id].copy():
+                        try:
+                            await viewer.send_text(frame_message)
+                        except Exception:
+                            edge_server.viewers[camera_id].remove(viewer)
+
     try:
         while True:
             data = await websocket.receive_text()
@@ -273,37 +308,8 @@ async def camera_websocket(websocket: WebSocket, camera_id: str):
             # Update last seen timestamp
             edge_server.cameras[camera_id]["last_seen"] = datetime.now()
 
-            jpg_data = base64.b64decode(frame_data["frame"])
-            nparr = np.frombuffer(jpg_data, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-
-            if frame is not None:
-                # Process frame with YOLO
-                processed_data = await edge_server.process_frame(frame)
-                
-                if processed_data:
-                    frame_data.update(processed_data)
-                    
-                    if processed_data["person_detected"]:
-                        pass
-                        # logger.info(f"Person detected in frame from camera {camera_id} "
-                        #           f"with {len(processed_data['detections'])} detections")
-
-                    # Broadcast processed frame to viewers
-                    if camera_id in edge_server.viewers:
-                        frame_message = json.dumps({
-                            "camera_id": camera_id,
-                            "timestamp": frame_data["timestamp"],
-                            "frame": processed_data["frame"],
-                            "detections": processed_data["detections"]
-                        })
-                        
-                        for viewer in edge_server.viewers[camera_id].copy():
-                            try:
-                                await viewer.send_text(frame_message)
-                            except Exception:
-                                edge_server.viewers[camera_id].remove(viewer)
+            # Process frame data asynchronously
+            asyncio.create_task(process_frame_data(frame_data))
                         
     except Exception as e:
         logger.error(f"Camera websocket error: {e}")
