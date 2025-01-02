@@ -42,3 +42,4 @@ venv
 
 
 .DS_Store
+src/onPremise/requirements_checksum.txt

@@ -38,10 +38,31 @@ fi
 echo "🔄 Activating virtual environment..."
 source venv/bin/activate
 
-# Install Python requirements
-echo "📦 Installing required Python packages..."
-pip install -r server/requirements.txt
-pip install -r devices/emulated/requirements.txt
+# Calculate checksum of requirements files
+requirements_files=("server/requirements.txt" "devices/emulated/requirements.txt")
+checksum=$(cat "${requirements_files[@]}" | sha256sum | awk '{print $1}')
+checksum_file="requirements_checksum.txt"
+
+# Check if checksum has changed or if virtual environment does not exist
+run_pip_install=false
+if [ ! -f "$checksum_file" ]; then
+    run_pip_install=true
+else
+    stored_checksum=$(cat "$checksum_file" | tr -d '[:space:]')
+    if [ "$checksum" != "$stored_checksum" ]; then
+        run_pip_install=true
+    fi
+fi
+
+# Install Python requirements if needed
+if [ "$run_pip_install" = true ]; then
+    echo "📦 Installing required Python packages..."
+    pip install -r server/requirements.txt
+    pip install -r devices/emulated/requirements.txt
+    echo -n "$checksum" > "$checksum_file"
+else
+    echo "📦 Python packages are already up-to-date."
+fi
 
 # Get number of devices to emulate
 read -p "Enter number of cameras to emulate: " num_cameras

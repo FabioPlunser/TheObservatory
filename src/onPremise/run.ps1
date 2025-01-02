@@ -60,10 +60,31 @@ if (-Not (Test-Path -Path "venv")) {
 Write-Host "🔄 Activating virtual environment..."
 & .\venv\Scripts\Activate.ps1
 
-# Install Python requirements
-Write-Host "📦 Installing required Python packages..."
-pip install -r server/requirements.txt
-pip install -r devices/emulated/requirements.txt
+# Calculate checksum of requirements files
+$requirements_files = @("server/requirements.txt", "devices/emulated/requirements.txt")
+$checksum = Get-FileHash -Algorithm SHA256 -Path $requirements_files | ForEach-Object { $_.Hash } | Join-String -Separator ""
+$checksum_file = "requirements_checksum.txt"
+
+# Check if checksum has changed or if virtual environment does not exist
+$run_pip_install = $false
+if (-Not (Test-Path -Path $checksum_file)) {
+    $run_pip_install = $true
+} else {
+    $stored_checksum = (Get-Content -Path $checksum_file -Raw).Trim()
+    if ($checksum -ne $stored_checksum) {
+        $run_pip_install = $true
+    }
+}
+
+# Install Python requirements if needed
+if ($run_pip_install) {
+    Write-Host "📦 Installing required Python packages..."
+    pip install -r server/requirements.txt
+    pip install -r devices/emulated/requirements.txt
+    $checksum | Set-Content -Path $checksum_file -NoNewline
+} else {
+    Write-Host "📦 Python packages are already up-to-date."
+}
 
 # Get number of devices to emulate
 $num_cameras = Read-Host "Enter number of cameras to emulate"
@@ -94,15 +115,6 @@ if (command_exists bun) {
     Write-Host "❌ Neither bun nor npm found. Please install one of them."
     exit 1
 }
-
-# Start Python dependencies installation
-$spinner = Start-Job -ScriptBlock { animate_loading "Installing Python dependencies..." }
-
-# Install Python requirements
-pip install -r server/requirements.txt
-pip install -r devices/emulated/requirements.txt
-Stop-Job $spinner
-Write-Host "✅ Python dependencies installed!"
 
 # Start the server in the background
 Write-Host "🖥️ Starting edge server..."
