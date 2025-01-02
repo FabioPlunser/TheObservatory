@@ -38,6 +38,10 @@ function cleanup {
     if ($use_simulated_data) {
         Stop-Process -Id $simulated_camera_pid -ErrorAction SilentlyContinue
     }
+    # Kill cloud process
+    if ($lauche_cloud) {
+        Stop-Process -Id $cloud_pid -ErrorAction SilentlyContinue
+    }
     # Kill server
     Stop-Process -Id $server_pid -ErrorAction SilentlyContinue
     
@@ -54,6 +58,10 @@ Write-Host "🚀 Starting setup script..."
 # Prompt the user to launch the Terraform server
 $launch_terraform = Read-Host "Do you want to launch the Terraform server? (y/n)"
 if ($launch_terraform -eq "y") {
+    # Get user input for launching the Cloud script
+    $lauche_cloud = Read-Host "Do you want to launch the Cloud script? (y/n)"
+    $lauche_cloud = $lauche_cloud -eq "y"
+
     # Check if AWS credentials file exists
     $aws_credentials_path = "$env:USERPROFILE\.aws\credentials"
     $aws_credentials_exist = Test-Path -Path $aws_credentials_path
@@ -109,11 +117,33 @@ if ($launch_terraform -eq "y") {
 
     Write-Host "🚀 Applying Terraform configuration..."
     terraform apply -var "private_pem_key=$key_pair_path" -auto-approve
+    # Get the IP address of the EC2 instance
+    $nats_instance_ip = terraform output -raw nats_instance_public_ip
+    # Ensure there's no whitespace
+    $nats_instance_ip = $nats_instance_ip.Trim()
+    
     Pop-Location
+
+    # Start Cloud server
+    if ($lauche_cloud) {
+        Write-Host "🌐 Starting Cloud script..."
+        
+        # Create the full NATS URL with explicit string formatting
+        $natsUrl = [string]::Format("nats://{0}:4222", $nats_instance_ip)
+
+        # Create argument list with explicit elements
+        $argumentList = @()
+        $argumentList += "cloud/cloud.py"
+        $argumentList += $natsUrl
+        
+        # Start the Python process with arguments
+        $cloud_process = Start-Process -FilePath "python" -ArgumentList $argumentList -PassThru
+        $global:cloud_pid = $cloud_process.Id
+    }
+
 } else {
     Write-Host "🚫 Skipping Terraform server launch."
 }
-
 
 # Create and activate Python virtual environment
 $venv_path = "venvWin"

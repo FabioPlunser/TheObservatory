@@ -35,3 +35,6 @@ EOF
   }
 }
 
+output "nats_instance_public_ip" {
+  value = aws_instance.nats_instance.public_ip
+}

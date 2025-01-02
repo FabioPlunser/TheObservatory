@@ -7,6 +7,7 @@ from datetime import datetime
 import nats
 import asyncio
 from typing import Dict, Any
+import sys
 
 # Configure logger with more detailed format
 logging.basicConfig(
@@ -16,7 +17,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-NATS_URL = "nats://172.31.86.74:4222"
+# Default NATS URL
+NATS_URL = "nats://54.226.169.138:4222"
+
+# Override NATS URL if provided as a command-line argument
+if len(sys.argv) > 1:
+    NATS_URL = sys.argv[1]
+    logger.info(f"Received NATS URL from CLI: {NATS_URL}")
+else:
+    logger.warning("No NATS URL provided as a command-line argument.")
+
 SIMILARITY_THRESHOLD = 90.0
 KNOWN_FACES_BUCKET = 'the-observatory-known-faces'
 FACES_TO_CHECK_BUCKET = 'the-observatory-faces-to-check'
