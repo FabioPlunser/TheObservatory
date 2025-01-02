@@ -20,6 +20,7 @@ class Camera:
         self.is_running = False
         self.discovery = EdgeServerDiscovery()
         self.reconnect_delay = 5
+        self.frame_interval = 1.0
         self.frame_rate = 30
         self.frame_width = 1920
         self.frame_height = 1080
@@ -70,19 +71,16 @@ class Camera:
             logger.error(f"Registration failed: {e}")
             return False
 
-    async def start_streaming(self, video_path=None, stop_event=None):
+    async def start_streaming(self, video_paths=None, stop_event=None):
         """Start camera and stream to edge server"""
         if not self.edge_server_url:
             logger.error("No edge server URL available")
             return
 
-        try:
-            if video_path:
-                self.cap = cv2.VideoCapture(video_path)
-            else:
-                self.cap = cv2.VideoCapture(0)
+        def configure_capture(video_source):
+            self.cap = cv2.VideoCapture(video_source)
             if not self.cap.isOpened():
-                raise RuntimeError("Could not open camera")
+                raise RuntimeError(f"Could not open video source {video_source}")
 
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
@@ -91,45 +89,58 @@ class Camera:
             actual_frame_rate = self.cap.get(cv2.CAP_PROP_FPS)
             frame_skip = int(actual_frame_rate / self.frame_rate)
             effective_frame_rate = actual_frame_rate / (frame_skip + 1)
+            return frame_skip, effective_frame_rate
 
+        try:
             ws_url = self.edge_server_url.replace("http://", "ws://") + f"/ws/camera/{self.camera_id}"
             logger.info(f"Connecting to WebSocket at {ws_url}")
 
-            async with websockets.connect(ws_url) as websocket:
+            async with websockets.connect(ws_url, ping_interval=10, ping_timeout=5) as websocket:
                 logger.info("WebSocket connection established")
                 self.is_running = True
 
-                while self.is_running and (stop_event is None or not stop_event.is_set()):
-                    for _ in range(frame_skip):
-                        self.cap.grab()  # Skip frames
+                if video_paths is None:
+                    frame_skip, effective_frame_rate = configure_capture(0)
+                    await self.stream_frames(stop_event, websocket, frame_skip, effective_frame_rate)
+                else:
+                    for video_source in video_paths:
+                        frame_skip, effective_frame_rate = configure_capture(video_source) 
+                        await self.stream_frames(stop_event, websocket, frame_skip, effective_frame_rate)
 
-                    ret, frame = self.cap.read()
-                    if not ret:
-                        continue
-
-                    # Resize frame to reduce data size
-                    frame = cv2.resize(frame, (self.frame_width // 2, self.frame_height // 2))
-
-                    _, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])  # Reduce quality to 50%
-                    frame_data = base64.b64encode(buffer).decode("utf-8")
-
-                    try:
-                        await websocket.send(json.dumps({
-                            "camera_id": self.camera_id,
-                            "timestamp": datetime.now().isoformat(),
-                            "frame": frame_data
-                        }))
-                    except Exception as e:
-                        logger.error(f"Failed to send frame: {e}")
-                        break
-
-                    await asyncio.sleep(1 / effective_frame_rate)
         except Exception as e:
             logger.error(f"Streaming error: {e}")
         finally:
             if self.cap:
                 self.cap.release()
             self.is_running = False
+
+    async def stream_frames(self, stop_event, websocket, frame_skip, effective_frame_rate):
+        while self.is_running and not stop_event.is_set():
+            for _ in range(frame_skip):
+                self.cap.grab()  # Skip frames
+
+            ret, frame = self.cap.read()
+            if not ret:
+                continue
+
+            # Resize frame to reduce data size
+            frame = cv2.resize(frame, (self.frame_width // 2, self.frame_height // 2))
+            # Reduce quality to 50%
+            _, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])  
+            
+            frame_data = base64.b64encode(buffer).decode("utf-8")
+
+            try:
+                await websocket.send(json.dumps({
+                                    "camera_id": self.camera_id,
+                                    "timestamp": datetime.now().isoformat(),
+                                    "frame": frame_data
+                                }))
+            except Exception as e:
+                logger.error(f"Failed to send frame: {e}")
+                break
+
+            await asyncio.sleep(1 / effective_frame_rate)
 
     async def stop(self):
         """Stop the camera"""
