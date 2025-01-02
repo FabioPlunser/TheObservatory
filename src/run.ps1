@@ -55,9 +55,9 @@ Register-EngineEvent PowerShell.Exiting -Action { cleanup }
 
 Write-Host "🚀 Starting setup script..."
 
-# Prompt the user to launch the Terraform server
-$launch_terraform = Read-Host "Do you want to launch the Terraform server? (y/n)"
-if ($launch_terraform -eq "y") {
+# Prompt the user to launch or destroy the Terraform server
+$action = Read-Host "Do you want to launch or destroy the Terraform server? (launch/destroy)"
+if ($action -eq "launch") {
     # Get user input for launching the Cloud script
     $lauche_cloud = Read-Host "Do you want to launch the Cloud script? (y/n)"
     $lauche_cloud = $lauche_cloud -eq "y"
@@ -97,6 +97,7 @@ if ($launch_terraform -eq "y") {
             Write-Host "AWS credentials found in the file."
         }
     }
+
     # Check if the key pair exists
     $key_pair_name = "theObservatory"
     $key_pair_exists = aws ec2 describe-key-pairs --key-names $key_pair_name 2>&1 | Select-String -Pattern $key_pair_name
@@ -117,6 +118,7 @@ if ($launch_terraform -eq "y") {
 
     Write-Host "🚀 Applying Terraform configuration..."
     terraform apply -var "private_pem_key=$key_pair_path" -auto-approve
+
     # Get the IP address of the EC2 instance
     $nats_instance_ip = terraform output -raw nats_instance_public_ip
     # Ensure there's no whitespace
@@ -141,8 +143,19 @@ if ($launch_terraform -eq "y") {
         $global:cloud_pid = $cloud_process.Id
     }
 
+} elseif ($action -eq "destroy") {
+    Write-Host "🛑 Destroying Terraform-managed infrastructure..."
+    Push-Location "terraform"
+    terraform destroy -var "private_pem_key=$key_pair_path" -auto-approve
+    Pop-Location
+    Write-Host "✅ Terraform-managed infrastructure destroyed."
+    $close = Read-Host "Do you want to continue with the setup script? (y/n)"
+    if ($close -eq "n") {
+        exit
+    }
 } else {
-    Write-Host "🚫 Skipping Terraform server launch."
+    Write-Host "🚫 Invalid action. Please enter 'launch' or 'destroy'."
+    exit 1
 }
 
 # Create and activate Python virtual environment
