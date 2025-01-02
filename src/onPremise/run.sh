@@ -38,6 +38,11 @@ fi
 echo "🔄 Activating virtual environment..."
 source venv/bin/activate
 
+# Install Python requirements
+echo "📦 Installing required Python packages..."
+pip install -r server/requirements.txt
+pip install -r devices/emulated/requirements.txt
+
 # Get number of devices to emulate
 read -p "Enter number of cameras to emulate: " num_cameras
 read -p "Enter number of alarms to emulate: " num_alarms
