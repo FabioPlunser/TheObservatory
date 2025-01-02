@@ -21,7 +21,6 @@ class Camera:
         self.discovery = EdgeServerDiscovery()
         self.reconnect_delay = 5
         self.frame_rate = 30
-        self.frame_interval = 1.0
         self.frame_width = 1920
         self.frame_height = 1080
 
@@ -91,6 +90,7 @@ class Camera:
 
             actual_frame_rate = self.cap.get(cv2.CAP_PROP_FPS)
             frame_skip = int(actual_frame_rate / self.frame_rate)
+            effective_frame_rate = actual_frame_rate / (frame_skip + 1)
 
             ws_url = self.edge_server_url.replace("http://", "ws://") + f"/ws/camera/{self.camera_id}"
             logger.info(f"Connecting to WebSocket at {ws_url}")
@@ -123,7 +123,7 @@ class Camera:
                         logger.error(f"Failed to send frame: {e}")
                         break
 
-                    await asyncio.sleep(1 / self.frame_rate)
+                    await asyncio.sleep(1 / effective_frame_rate)
         except Exception as e:
             logger.error(f"Streaming error: {e}")
         finally:
