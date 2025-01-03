@@ -56,8 +56,8 @@ Register-EngineEvent PowerShell.Exiting -Action { cleanup }
 Write-Host "🚀 Starting setup script..."
 
 # Prompt the user to launch or destroy the Terraform server
-$action = Read-Host "Do you want to launch or destroy the Terraform server? (launch/destroy)"
-if ($action -eq "launch") {
+$action = Read-Host "Do you want to launch, destroy, or do nothing with the Terraform server? ([l]aunch/[d]estroy/[n]othing)"
+if ($action -eq "l") {
     # Get user input for launching the Cloud script
     $lauche_cloud = Read-Host "Do you want to launch the Cloud script? (y/n)"
     $lauche_cloud = $lauche_cloud -eq "y"
@@ -143,7 +143,7 @@ if ($action -eq "launch") {
         $global:cloud_pid = $cloud_process.Id
     }
 
-} elseif ($action -eq "destroy") {
+} elseif ($action -eq "d") {
     Write-Host "🛑 Destroying Terraform-managed infrastructure..."
     Push-Location "terraform"
     terraform destroy -var "private_pem_key=$key_pair_path" -auto-approve
@@ -153,6 +153,9 @@ if ($action -eq "launch") {
     if ($close -eq "n") {
         exit
     }
+
+elseif ($action -eq "n") {
+    Write-Host "Continuing with the setup script..."
 } else {
     Write-Host "🚫 Invalid action. Please enter 'launch' or 'destroy'."
     exit 1

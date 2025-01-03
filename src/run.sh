@@ -151,7 +151,7 @@ elif [ "$action" = "d" ]; then
     fi
 
 elif [ "$action" = "n" ]; then
-    echo "Continue with the rest of the script"
+    echo "Continuing with the setup script..."
 else
     echo "🚫 Invalid action. Please enter 'l', 'd', or 'n'."
     exit 1
