@@ -12,8 +12,8 @@
 Preferences preferences;
 
 // WiFi credentials
-const char *ssid = "PBS_66829D_TP-Link";
-const char *password = "06645306763";
+const char *ssid = "TheObservatory";
+const char *password = "distributed";
 
 // WebSocket server details (will be discovered via mDNS)
 String wsHost;
@@ -152,14 +152,14 @@ void initCamera()
   config.pin_reset = RESET_GPIO_NUM;
 
   // Reduce XCLK frequency for better stability
-  config.xclk_freq_hz = 20000000; // Changed from 20MHz to 10MHz
+  config.xclk_freq_hz = 20000000;
 
   config.pixel_format = PIXFORMAT_JPEG;
 
   // Start with lower resolution
-  config.frame_size = FRAMESIZE_VGA;
-  config.jpeg_quality = 15; // 0-63 lower means higher quality
-  config.fb_count = 2;      // Changed to 2 frame buffers
+  config.frame_size = FRAMESIZE_QVGA;
+  config.jpeg_quality = 12; // 0-63 lower means higher quality
+  config.fb_count = 1;      // Changed to 2 frame buffers
 
   // Initialize the camera
   esp_err_t err = esp_camera_init(&config);
@@ -264,7 +264,7 @@ void registerCamera()
   String json;
   serializeJson(doc, json);
 
-  String url = "http://" + wsHost + ":" + String(wsPort) + "/register";
+  String url = "http://" + wsHost + ":" + String(wsPort) + "/register/camera";
   http.begin(client, url.c_str());
   http.addHeader("Content-Type", "application/json");
   int httpResponseCode = http.POST(json);

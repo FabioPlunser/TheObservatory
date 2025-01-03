@@ -10,6 +10,7 @@
   import { persistentStore } from "$lib/helper/store.svelte";
   import { getState } from "$lib/helper/globalState.svelte";
   import { persistentState } from "$lib/helper/persistentState.svelte";
+  import { getPages } from "$lib/helper/pages.svelte";
   // -------------------------------------------------------------------
   // -------------------------------------------------------------------
   const theme = persistentStore("theme", "light");
@@ -17,35 +18,9 @@
     name: "Cameras",
     component: Cameras,
   });
+  let menuBarStates = getPages()?.value;
   // -------------------------------------------------------------------
   // -------------------------------------------------------------------
-  let menuBarStates = $state([
-    {
-      name: "Cameras",
-      component: Cameras,
-      icon: undefined,
-    },
-    {
-      name: "Alarms",
-      component: Alarms,
-      icon: undefined,
-    },
-    {
-      name: "Rooms",
-      component: Rooms,
-      icon: undefined,
-    },
-    {
-      name: "Known Faces",
-      component: KnownFaces,
-      icon: undefined,
-    },
-    {
-      name: "Settings",
-      component: Settings,
-      icon: "fluent:settings-16-filled",
-    },
-  ]);
 </script>
 
 <div class="w-full px-2 py-2 fixed top-0">
@@ -103,7 +78,6 @@
           onclick={() =>
             (currentPage.value = {
               name: option.name,
-              component: option.component,
             })}
           class={currentPage.value?.name === option.name ? "active" : ""}
         >

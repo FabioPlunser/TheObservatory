@@ -1,71 +1,73 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
 
   let { cameraId } = $props();
-  let canvas: HTMLCanvasElement;
-  let websocket: WebSocket;
-  let reconnectTimer: number;
-  let isConnected = $state(false);
+  let videoElement: HTMLVideoElement;
+  let peerConnection: RTCPeerConnection;
 
-  onMount(() => {
-    connectWebSocket();
-  });
+  async function startStream() {
+    try {
+      // Create peer connection
+      peerConnection = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      });
 
-  function connectWebSocket() {
-    clearTimeout(reconnectTimer);
-    websocket?.close();
-
-    // Connect to the viewer websocket endpoint
-    websocket = new WebSocket(
-      `ws://${window.location.host}/ws/view/${cameraId}`
-    );
-
-    const ctx = canvas.getContext("2d");
-
-    websocket.onopen = () => {
-      isConnected = true;
-    };
-
-    websocket.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
-      const img = new Image();
-      img.onload = () => {
-        ctx?.clearRect(0, 0, canvas.width, canvas.height);
-        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+      // Handle incoming track
+      peerConnection.ontrack = (event) => {
+        if (videoElement) {
+          videoElement.srcObject = event.streams[0];
+        }
       };
-      img.src = "data:image/jpeg;base64," + data.frame;
-    };
 
-    websocket.onclose = () => {
-      isConnected = false;
-      // Reconnect after 5 seconds
-      reconnectTimer = setTimeout(connectWebSocket, 5000);
-    };
+      // Create offer
+      const offer = await peerConnection.createOffer({
+        offerToReceiveVideo: true,
+      });
+      await peerConnection.setLocalDescription(offer);
 
-    websocket.onerror = (error) => {
-      console.error("WebSocket error:", error);
-      websocket.close();
-    };
+      // Send offer to server
+      const response = await fetch(`/webrtc/${cameraId}/offer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sdp: offer.sdp,
+          type: offer.type,
+        }),
+      });
+
+      const answer = await response.json();
+      await peerConnection.setRemoteDescription(answer);
+    } catch (e) {
+      console.error("Error starting stream:", e);
+    }
   }
 
+  async function stopStream() {
+    if (peerConnection) {
+      peerConnection.close();
+      await fetch(`/webrtc/${cameraId}/close`, { method: "POST" });
+    }
+    if (videoElement) {
+      videoElement.srcObject = null;
+    }
+  }
+
+  onMount(() => {
+    startStream();
+  });
+
   onDestroy(() => {
-    clearTimeout(reconnectTimer);
-    websocket?.close();
+    stopStream();
   });
 </script>
 
 <div class="relative w-full h-full">
-  <canvas
-    bind:this={canvas}
-    width={640}
-    height={480}
+  <!-- svelte-ignore a11y_media_has_caption -->
+  <!-- svelte-ignore element_invalid_self_closing_tag -->
+  <video
+    bind:this={videoElement}
+    autoplay
+    playsinline
     class="w-full h-full object-cover"
   />
-  {#if !isConnected}
-    <div
-      class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white"
-    >
-      Reconnecting...
-    </div>
-  {/if}
 </div>

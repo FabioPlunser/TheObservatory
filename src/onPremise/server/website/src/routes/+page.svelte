@@ -1,18 +1,14 @@
 <script lang="ts">
   import { persistentState } from "$lib/helper/persistentState.svelte";
-  import { getState } from "$lib/helper/globalState.svelte";
-  import { onMount } from "svelte";
+  import { getPages } from "$lib/helper/pages.svelte";
 
-  // let currentPage = getState<currentPageType>("currentPage");
-  let currentPage = persistentState<currentPageType>("currentPage");
-  onMount(() => {
-    currentPage = persistentState<currentPageType>("currentPage");1
+  const Thing = $derived.by(() => {
+    let currentPage = persistentState<currentPageType>("currentPage");
+    let pages = getPages().value;
+    return pages.find((p) => p.name === currentPage.value.name)?.component;
   });
-  let show = $derived(currentPage.value);
-
-  $inspect(show);
 </script>
 
-{#if show}
-  <show.component />
+{#if Thing}
+  <Thing></Thing>
 {/if}

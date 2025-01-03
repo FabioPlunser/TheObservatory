@@ -8,6 +8,7 @@ export function persistentState<T>(key: string, initialValue?: T) {
 
     if (browser) {
       const storedValue = localStorage.getItem(key);
+      console.log('storedValue', storedValue);
       if (storedValue) {
         try {
           globalStorage[key] = JSON.parse(storedValue);

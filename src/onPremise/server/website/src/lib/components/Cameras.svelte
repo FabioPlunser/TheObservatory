@@ -22,6 +22,7 @@
       fetch("/api/get-rooms"),
     ]);
     cameras = await camerasRes.json();
+    console.log("get cmaeras", cameras);
     rooms = await roomsRes.json();
   }
   // -------------------------------------------------------------------
@@ -44,6 +45,7 @@
 </script>
 
 <div class="mx-4">
+  <h1>Cameras</h1>
   <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
     {#each cameras as camera (camera.id)}
       <div class="rounded-lg p-4 bg-base-200 shadow-lg">
