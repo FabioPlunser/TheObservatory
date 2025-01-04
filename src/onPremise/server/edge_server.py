@@ -1,47 +1,30 @@
 from zeroconf import ServiceInfo, Zeroconf
-from ultralytics import YOLO
 from concurrent.futures import ThreadPoolExecutor
-from aiortc import RTCPeerConnection, RTCSessionDescription
 from datetime import datetime
-from rtsp_reader import RTSPReader
-from video_transform import VideoTransformTrack
-from typing import Dict
+from video_processor import VideoProcessor
+from typing import Dict, Set
+from database import Database
 
 import socket
 import platform
-import torch
 import asyncio
 import logging
+import multiprocessing
 
 logger = logging.getLogger(__name__)
 
 
-def get_device():
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 class EdgeServer:
-    def __init__(self):
+    def __init__(self, port):
         self.cameras = {}
         self.alarms = {}
-        self.rtsp_readers = {}
-        self.peer_connections = {}
-        self.executor = ThreadPoolExecutor(max_workers=4)
-        self.port = 8000
+        self.processors: Dict[str, VideoProcessor] = {}
+        self.executor = ThreadPoolExecutor()
+        self.port = port
+        self.reader_queue = multiprocessing.Queue()
+        self.db = Database()
 
-        # Initialize YOLO
-        self.device = get_device()
-        try:
-            self.model = YOLO("yolov8n.pt")
-            self.model.to(self.device)
-        except Exception as e:
-            logger.error(f"Error initializing YOLO model: {e}")
-            self.device = "cpu"
-            self.model = YOLO("yolov8n.pt")
+        self.active_streams = set()
 
     async def start_mdns(self):
         def register_service():
@@ -69,36 +52,87 @@ class EdgeServer:
             self.zeroconf.close()
         self.executor.shutdown(wait=False)
 
-    async def start_rtsp_reader(self, camera_id, rtsp_url):
-        if camera_id in self.rtsp_readers:
-            self.rtsp_readers[camera_id].stop()
+    async def start_camera_stream(self, camera_id: str, rtsp_url: str):
+        """Start streaming for a camera"""
+        try:
+            # Stop existing processor if any
+            await self.stop_camera_stream(camera_id)
 
-        reader = RTSPReader(rtsp_url)
-        self.rtsp_readers[camera_id] = reader
-        asyncio.create_task(reader.start())
+            # Create and start new processor
+            processor = VideoProcessor(rtsp_url)
+            self.processors[camera_id] = processor
+            processor.start()
 
-    async def handle_webrtc_offer(self, camera_id: str, offer: dict) -> dict:
-        if camera_id not in self.rtsp_readers:
-            raise ValueError(f"Camera {camera_id} not found")
+            # Update camera status
+            self.cameras[camera_id] = {
+                "rtsp_url": rtsp_url,
+                "last_seen": datetime.now(),
+                "status": "streaming",
+            }
 
-        pc = RTCPeerConnection()
-        self.peer_connections[camera_id] = pc
+            logger.info(f"Started video processor for camera {camera_id}")
 
-        video_track = VideoTransformTrack(
-            self.rtsp_readers[camera_id], camera_id, self.model, self.device
-        )
-        pc.addTrack(video_track)
+        except Exception as e:
+            logger.error(f"Error starting camera stream: {e}")
+            # Clean up on error
+            if camera_id in self.processors:
+                self.processors[camera_id].stop()
+                del self.processors[camera_id]
+            raise
 
-        await pc.setRemoteDescription(
-            RTCSessionDescription(offer["sdp"], offer["type"])
-        )
-        answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
+    async def stop_camera_stream(self, camera_id: str):
+        """Stop streaming for a camera and clean up all resources"""
+        logger.info(f"Stopping camera stream for {camera_id}")
 
-        return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+        try:
+            # Stop and cleanup video processor
+            if camera_id in self.processors:
+                try:
+                    processor = self.processors[camera_id]
+                    processor.stop()  # This will stop both reader and YOLO processes
+                    del self.processors[camera_id]
+                    logger.info(f"Video processor stopped for camera {camera_id}")
+                except Exception as e:
+                    logger.error(
+                        f"Error stopping video processor for camera {camera_id}: {e}"
+                    )
+                    raise
 
-    async def close_peer_connection(self, camera_id: str):
-        if camera_id in self.peer_connections:
-            pc = self.peer_connections[camera_id]
-            await pc.close()
-            del self.peer_connections[camera_id]
+            # Update camera status if exists
+            if camera_id in self.cameras:
+                self.cameras[camera_id]["status"] = "stopped"
+
+            logger.info(f"Successfully stopped camera stream {camera_id}")
+
+        except Exception as e:
+            logger.error(f"Error in stop_camera_stream: {e}")
+            raise  # Re-raise to handle in the route
+        finally:
+            # Make absolutely sure we clean up processors
+            if camera_id in self.processors:
+                try:
+                    del self.processors[camera_id]
+                except:
+                    pass
+
+    async def get_frame(self, camera_id: str) -> bytes:
+        """Get the latest frame for a camera"""
+        try:
+            processor = self.processors.get(camera_id)
+            if not processor:
+                logger.error(f"No processor found for camera {camera_id}")
+                del self.processors[camera_id]
+                del self.cameras[camera_id]
+                self.db.delete_camera(camera_id)
+                return None
+
+            frame = processor.get_latest_frame()
+            if frame is not None:
+                # Update last seen timestamp
+                self.cameras[camera_id]["last_seen"] = datetime.now()
+
+            return frame
+
+        except Exception as e:
+            logger.error(f"Error getting frame: {e}")
+            return None

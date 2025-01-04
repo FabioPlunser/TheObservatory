@@ -1,8 +1,16 @@
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from datetime import datetime
 from edge_server import EdgeServer
 from database import Database
 
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -47,9 +55,9 @@ class Router:
                 }
 
                 await self.db.create_camera(
-                    camera_id, registration_data["name"], "registered"
+                    camera_id, registration_data["name"], rtsp_url, "registered"
                 )
-                await self.edge_server.start_rtsp_reader(camera_id, rtsp_url)
+                await self.edge_server.start_camera_stream(camera_id, rtsp_url)
 
                 logger.info(f"Camera {camera_id} registered with RTSP URL: {rtsp_url}")
                 return {"status": "success", "message": "Camera registered"}
@@ -59,21 +67,45 @@ class Router:
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
-        @router.post("/webrtc/{camera_id}/offer")
-        async def webrtc_offer(camera_id: str, offer: dict):
-            try:
-                answer = await self.edge_server.handle_webrtc_offer(camera_id, offer)
-                return answer
-            except Exception as e:
-                logger.error(f"WebRTC offer error: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
+        @router.websocket("/ws/camera/{camera_id}")
+        async def camera_stream(websocket: WebSocket, camera_id: str):
+            if camera_id not in self.edge_server.cameras:
+                await websocket.close(code=4004, reason="Camera not found")
+                return
 
-        # ----------------------------------------------------------------------------
-        # ----------------------------------------------------------------------------
-        @router.post("/webrtc/{camera_id}/close")
-        async def webrtc_close(camera_id: str):
-            await self.edge_server.close_peer_connection(camera_id)
-            return {"status": "success"}
+            try:
+                await websocket.accept()
+
+                while True:
+                    try:
+                        # Check for client messages (non-blocking)
+                        try:
+                            data = await asyncio.wait_for(
+                                websocket.receive_text(), timeout=0.001
+                            )
+                            if data == "close":
+                                break
+                        except asyncio.TimeoutError:
+                            pass
+
+                        # Get and send frame
+                        frame_bytes = await self.edge_server.get_frame(camera_id)
+                        if frame_bytes is not None:
+                            await websocket.send_bytes(frame_bytes)
+
+                        # Control frame rate (approximately 30 FPS)
+                        await asyncio.sleep(0.033)
+
+                    except WebSocketDisconnect:
+                        break
+                    except Exception as e:
+                        logger.error(f"Error in WebSocket loop: {e}")
+                        break
+
+            except Exception as e:
+                logger.error(f"WebSocket error: {e}")
+            finally:
+                logger.info(f"WebSocket connection closed for camera {camera_id}")
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
@@ -145,8 +177,30 @@ class Router:
         # ----------------------------------------------------------------------------
         @router.post("/api/delete-camera/{camera_id}")
         async def delete_camera(camera_id: str):
-            await self.db.delete_camera(camera_id)
-            return {"status": "success", "message": "Camera deleted"}
+            """Delete a camera and clean up all associated resources"""
+            try:
+                logger.info(f"Starting deletion of camera {camera_id}")
+
+                # First stop the video processor if running
+                if camera_id in self.edge_server.processors:
+                    logger.info(f"Stopping video processor for camera {camera_id}")
+                    await self.edge_server.stop_camera_stream(camera_id)
+
+                # Remove from edge server cameras dict
+                if camera_id in self.edge_server.cameras:
+                    logger.info(f"Removing camera {camera_id} from edge server")
+                    del self.edge_server.cameras[camera_id]
+
+                # Finally remove from database
+                logger.info(f"Removing camera {camera_id} from database")
+                await self.db.delete_camera(camera_id)
+
+                return {"status": "success", "message": "Camera deleted"}
+
+            except Exception as e:
+                error_msg = f"Error deleting camera {camera_id}: {str(e)}"
+                logger.error(error_msg)
+                raise HTTPException(status_code=500, detail=error_msg)
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------

@@ -1,4 +1,12 @@
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey, DateTime
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Boolean,
+    ForeignKey,
+    DateTime,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, relationship
@@ -8,54 +16,60 @@ from datetime import datetime
 
 Base = declarative_base()
 
+
 # Models
 class Room(Base):
-    __tablename__ = 'rooms'
-    
+    __tablename__ = "rooms"
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
-    
+
     # Relationships
     cameras = relationship("Camera", back_populates="room")
     alarms = relationship("Alarm", back_populates="room")
     alarm_devices = relationship("AlarmDevice", back_populates="room")
 
+
 class Camera(Base):
-    __tablename__ = 'cameras'
-    
+    __tablename__ = "cameras"
+
     id = Column(String, primary_key=True)
     name = Column(String)
-    room_id = Column(Integer, ForeignKey('rooms.id'))
+    room_id = Column(Integer, ForeignKey("rooms.id"))
+    rtsp_url = Column(String)
     status = Column(String)
     last_seen = Column(DateTime)
-    
+
     # Relationships
     room = relationship("Room", back_populates="cameras")
     alarms = relationship("Alarm", back_populates="camera")
 
+
 class Alarm(Base):
-    __tablename__ = 'alarm'
-    
+    __tablename__ = "alarm"
+
     id = Column(Integer, primary_key=True, autoincrement=True)
-    camera_id = Column(String, ForeignKey('cameras.id'))
-    room_id = Column(Integer, ForeignKey('rooms.id'))
+    camera_id = Column(String, ForeignKey("cameras.id"))
+    room_id = Column(Integer, ForeignKey("rooms.id"))
     timestamp = Column(DateTime)
     active = Column(Boolean)
-    
+
     # Relationships
     camera = relationship("Camera", back_populates="alarms")
     room = relationship("Room", back_populates="alarms")
 
+
 class AlarmDevice(Base):
-    __tablename__ = 'alarm_devices'
-    
+    __tablename__ = "alarm_devices"
+
     id = Column(String, primary_key=True)
     name = Column(String)
-    room_id = Column(Integer, ForeignKey('rooms.id'))
+    room_id = Column(Integer, ForeignKey("rooms.id"))
     timestamp = Column(DateTime)
-    
+
     # Relationships
     room = relationship("Room", back_populates="alarm_devices")
+
 
 class Database:
     def __init__(self, db_url="sqlite+aiosqlite:///db.db"):
@@ -68,13 +82,16 @@ class Database:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-    async def create_camera(self, camera_id: str, name: str, status: str) -> Camera:
+    async def create_camera(
+        self, camera_id: str, name: str, rtsp_url: str, status: str
+    ) -> Camera:
         async with self.async_session() as session:
             camera = Camera(
                 id=camera_id,
                 name=name,
+                rtsp_url=rtsp_url,
                 status=status,
-                last_seen=datetime.now()
+                last_seen=datetime.now(),
             )
             session.add(camera)
             await session.commit()
@@ -94,16 +111,7 @@ class Database:
             stmt = select(Camera)
             result = await session.execute(stmt)
             cameras = result.scalars().all()
-            return [
-                {
-                    "id": camera.id,
-                    "name": camera.name,
-                    "room_id": camera.room_id,
-                    "status": camera.status,
-                    "last_seen": camera.last_seen
-                }
-                for camera in cameras
-            ]
+            return [camera.__dict__ for camera in cameras if camera]
 
     async def get_camera(self, camera_id: str) -> Optional[Dict]:
         async with self.async_session() as session:
@@ -111,13 +119,7 @@ class Database:
             result = await session.execute(stmt)
             camera = result.scalar_one_or_none()
             if camera:
-                return {
-                    "id": camera.id,
-                    "name": camera.name,
-                    "room_id": camera.room_id,
-                    "status": camera.status,
-                    "last_seen": camera.last_seen
-                }
+                return camera.__dict__
             return None
 
     async def update_camera_status(self, camera_id: str, status: str):
@@ -135,7 +137,7 @@ class Database:
             stmt = select(Room)
             result = await session.execute(stmt)
             rooms = result.scalars().all()
-            return [{"id": room.id, "name": room.name} for room in rooms]
+            return [room.__dict__ for room in rooms]
 
     async def create_room(self, room_name: str) -> Room:
         async with self.async_session() as session:
@@ -167,16 +169,7 @@ class Database:
             stmt = select(Alarm)
             result = await session.execute(stmt)
             alarms = result.scalars().all()
-            return [
-                {
-                    "id": alarm.id,
-                    "camera_id": alarm.camera_id,
-                    "room_id": alarm.room_id,
-                    "timestamp": alarm.timestamp,
-                    "active": alarm.active
-                }
-                for alarm in alarms
-            ]
+            return [alarm.__dict__ for alarm in alarms]
 
     async def get_armed_alarms(self) -> List[Dict]:
         async with self.async_session() as session:
@@ -189,7 +182,7 @@ class Database:
                     "camera_id": alarm.camera_id,
                     "room_id": alarm.room_id,
                     "timestamp": alarm.timestamp,
-                    "active": alarm.active
+                    "active": alarm.active,
                 }
                 for alarm in alarms
             ]
@@ -205,7 +198,7 @@ class Database:
                     "camera_id": alarm.camera_id,
                     "room_id": alarm.room_id,
                     "timestamp": alarm.timestamp,
-                    "active": alarm.active
+                    "active": alarm.active,
                 }
                 for alarm in alarms
             ]
@@ -213,9 +206,7 @@ class Database:
     async def create_alarm_device(self, alarm_device_id: str, name: str) -> AlarmDevice:
         async with self.async_session() as session:
             alarm_device = AlarmDevice(
-                id=alarm_device_id,
-                name=name,
-                timestamp=datetime.now()
+                id=alarm_device_id, name=name, timestamp=datetime.now()
             )
             session.add(alarm_device)
             await session.commit()
@@ -240,7 +231,7 @@ class Database:
                     "id": device.id,
                     "name": device.name,
                     "room_id": device.room_id,
-                    "timestamp": device.timestamp
+                    "timestamp": device.timestamp,
                 }
                 for device in devices
             ]
@@ -255,6 +246,6 @@ class Database:
                     "id": device.id,
                     "name": device.name,
                     "room_id": device.room_id,
-                    "timestamp": device.timestamp
+                    "timestamp": device.timestamp,
                 }
             return None
