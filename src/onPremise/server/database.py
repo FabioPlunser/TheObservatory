@@ -47,6 +47,7 @@ class Camera(Base):
     # Relationships
     room = relationship("Room", back_populates="cameras")
     alarms = relationship("Alarm", back_populates="camera")
+    face_detections = relationship("FaceDetection", back_populates="camera")  # Add this
 
 
 class Alarm(Base):
@@ -91,6 +92,7 @@ class KnownFace(Base):
 class FaceDetection(Base):
     __tablename__ = "face_detections"
 
+    id = Column(Integer, primary_key=True, autoincrement=True)
     camera_id = Column(String, ForeignKey("cameras.id"))
     known_face_id = Column(Integer, ForeignKey("known_faces.id"), nullable=True)
     detection_time = Column(DateTime, default=datetime.now)
