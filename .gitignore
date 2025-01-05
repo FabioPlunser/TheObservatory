@@ -39,6 +39,8 @@ data
 
 __pycache__/
 venv
+venvWin
 
 
 .DS_Store
+requirements_checksum.txt

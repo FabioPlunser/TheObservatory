@@ -14,11 +14,20 @@ The on premmise server handels the following
 - Receiving the results from the cloud and sending alarms to the alarms 
 - Detecting persons in the camera streams with YOLO and sending the images to the cloud for facial recognition 
 
-To run the On Premis server do the following: 
+To run the On Premis server do the following:
+(linux) 
 ```bash 
 cd src/onPremis 
 ./run.sh
 ```
+(windows)
+```bash
+cd src/onPremis
+run.ps1
+```
+
+Python 3.12 is required to run the project.
+
 This will do everything automatically for you.
 
 Or else for `deveolpment` you can do the following: 
