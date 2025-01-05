@@ -13,7 +13,6 @@ animate_loading() {
     local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
     local delay=0.1
     local i=0
-    
     while kill -0 $PPID 2>/dev/null; do
         printf "\r${frames:i++%${#frames}:1} %s" "$message"
         sleep $delay
@@ -38,10 +37,26 @@ fi
 echo "🔄 Activating virtual environment..."
 source venv/bin/activate
 
+# Check if Docker is running
+if ! docker info >/dev/null 2>&1; then
+    echo "❌ Docker is not running. Please start Docker and try again."
+    exit 1
+fi
+
+# Start RTSP server
+echo "📹 Starting RTSP server..."
+if docker ps -a | grep -q "rtsp-server"; then
+    echo "🔄 Removing existing RTSP server container..."
+    docker rm -f rtsp-server >/dev/null 2>&1
+fi
+docker run -d --name rtsp-server -p 8554:8554 aler9/rtsp-simple-server >/dev/null 2>&1
+echo "✅ RTSP server started successfully!"
+
 # Get number of devices to emulate
 read -p "Enter number of cameras to emulate: " num_cameras
 read -p "Enter number of alarms to emulate: " num_alarms
 read -p "Do you want to use simulated data? (y/n): " use_simulated_data
+
 if [ "$use_simulated_data" = "y" ]; then
     use_simulated_data=true
 else
@@ -85,7 +100,7 @@ spinner_pid=$!
 
 # Start the server in the background
 echo "🖥️ Starting edge server..."
-python server/edge_server.py &
+python server/main.py &
 server_pid=$!
 
 # Wait for server to start
@@ -123,24 +138,33 @@ cleanup() {
     echo "🛑 Stopping all processes..."
     # Kill any remaining spinner
     kill $spinner_pid 2>/dev/null || true
+    
     # Kill camera processes
     for pid in "${camera_pids[@]}"; do
         kill $pid 2>/dev/null || true
     done
+    
     # Kill alarm processes
     for pid in "${alarm_pids[@]}"; do
         kill $pid 2>/dev/null || true
     done
+    
     # Kill simulated camera process group
     if [ "$use_simulated_data" = true ]; then
         # Kill the entire process group
         kill -- -$simulated_camera_pid 2>/dev/null || true
     fi
+    
     # Kill server
     kill $server_pid 2>/dev/null || true
     
+    # Stop and remove RTSP server container
+    echo "📹 Stopping RTSP server..."
+    docker stop rtsp-server >/dev/null 2>&1
+    docker rm rtsp-server >/dev/null 2>&1
+    
     echo "👋 Cleanup complete"
-    rm -rf db.db 
+    rm -rf db.db
     exit 0
 }
 

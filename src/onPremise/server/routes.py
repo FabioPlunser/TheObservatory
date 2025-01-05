@@ -5,13 +5,19 @@ from fastapi import (
     Request,
     WebSocket,
     WebSocketDisconnect,
+    UploadFile,
+    File,
 )
 from datetime import datetime
 from edge_server import EdgeServer
 from database import Database
+from nats_client import NatsClient
 
 import asyncio
+import aiohttp
 import logging
+import uuid
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +26,7 @@ class Router:
     def __init__(self, edge_server: EdgeServer, db: Database):
         self.edge_server = edge_server
         self.db = db
+        self.nats_client = NatsClient(os.getenv("CLOUD_URL"))
 
     def create_routes(self) -> APIRouter:
         router = APIRouter()
@@ -239,5 +246,58 @@ class Router:
         ):
             await self.db.assign_alarm_device_room(alarm_device_id, room_id)
             return {"status": "success", "message": "Camera assigned to room"}
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.post("/api/faces/upload")
+        async def upload_known_face(file: UploadFile = File(...)):
+            """Upload a known face image to the cloud storage."""
+            try:
+                image_data = await file.read()
+
+                face_id = str(uuid.uuid4())
+
+                response = await self.nats_client.send_message(
+                    "presigned_upload_known_face",
+                    {
+                        "company_id": self.db.get_company_id(),
+                        "face_id": face_id,
+                        "image_data": image_data,
+                    },
+                )
+
+                if not response.get("success"):
+                    raise HTTPException(status_code=500, detail="Error uploading face")
+
+                # Upload image using presigned URL
+                async with aiohttp.ClientSession() as session:
+                    async with session.put(response["url"], data=image_data) as resp:
+                        if resp.status != 200:
+                            raise HTTPException(
+                                status_code=500, detail="Error uploading face"
+                            )
+
+                # Create local dataase entry
+                known_face = await self.db.create_known_face(
+                    face_id, s3_key=response["s3_key"]
+                )
+
+                # Notify cloud that upload has completed
+                confirmation = await self.nats_client.send_message(
+                    "confirm_known_face_upload",
+                    {
+                        "company_id": self.db.get_company_id(),
+                        "face_id": face_id,
+                    },
+                )
+
+                if not confirmation.get("success"):
+                    await self.db.delete_known_face(face_id)
+                    raise HTTPException(
+                        status_code=500, detail="Error confirming face upload"
+                    )
+            except Exception as e:
+                logger.error(f"Error generating S3 key: {e}")
+                raise HTTPException(status_code=500, detail="Error generating S3 key")
 
         return router

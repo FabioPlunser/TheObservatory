@@ -77,7 +77,11 @@ def process_frames(frame_queue: mp.Queue, output_queue: mp.Queue, stop_event: mp
 
             try:
                 # Run YOLO detection with explicit device
-                results = model(frame, device=device, verbose=False)
+                results = model(
+                    frame,
+                    device=device,
+                    verbose=False,
+                )
 
                 # Draw boxes for detected persons
                 for result in results:

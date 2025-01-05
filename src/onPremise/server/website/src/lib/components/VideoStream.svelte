@@ -16,7 +16,6 @@
     ws.binaryType = "arraybuffer"; // Important!
 
     ws.onmessage = function (event) {
-      console.log("Got message for camera", cameraId);
       const blob = new Blob([event.data], { type: "image/jpeg" });
       const url = URL.createObjectURL(blob);
       imgElement.src = url;

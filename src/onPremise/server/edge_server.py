@@ -28,21 +28,51 @@ class EdgeServer:
 
     async def start_mdns(self):
         def register_service():
-            self.zeroconf = Zeroconf()
+            try:
+                self.zeroconf = Zeroconf()
 
-            local_ip = socket.gethostbyname(socket.gethostname())
-            hostname = platform.node()
+                # Get all network interfaces
+                local_ips = []
+                try:
+                    hostname = socket.gethostname()
+                    local_ips = socket.gethostbyname_ex(hostname)[2]
+                except socket.gaierror:
+                    # Fallback to a basic IP if hostname resolution fails
+                    local_ips = ["127.0.0.1"]
 
-            self.service_info = ServiceInfo(
-                type_="_edgeserver._tcp.local.",
-                name=f"EdgeServer._edgeserver._tcp.local.",
-                addresses=[socket.inet_aton(local_ip)],
-                port=self.port,
-                properties={"version": "1.0", "server": "edge"},
-                server=f"{hostname}.local.",
-            )
+                # Use the first non-localhost IP
+                local_ip = next(
+                    (ip for ip in local_ips if not ip.startswith("127.")), local_ips[0]
+                )
 
-            self.zeroconf.register_service(self.service_info)
+                hostname = platform.node()
+
+                self.service_info = ServiceInfo(
+                    type_="_edgeserver._tcp.local.",
+                    name=f"EdgeServer._edgeserver._tcp.local.",
+                    addresses=[socket.inet_aton(local_ip)],
+                    port=self.port,
+                    properties={"version": "1.0", "server": "edge"},
+                    server=f"{hostname}.local.",
+                )
+
+                try:
+                    self.zeroconf.register_service(self.service_info)
+                    logger.info(
+                        f"Successfully registered mDNS service on {local_ip}:{self.port}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to register mDNS service: {e}. Server will continue without mDNS."
+                    )
+                    if hasattr(self, "zeroconf"):
+                        self.zeroconf.close()
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to start mDNS: {e}. Server will continue without mDNS."
+                )
+                return
 
         await asyncio.get_event_loop().run_in_executor(self.executor, register_service)
 
@@ -123,7 +153,7 @@ class EdgeServer:
                 logger.error(f"No processor found for camera {camera_id}")
                 del self.processors[camera_id]
                 del self.cameras[camera_id]
-                self.db.delete_camera(camera_id)
+                await self.db.delete_camera(camera_id)
                 return None
 
             frame = processor.get_latest_frame()
