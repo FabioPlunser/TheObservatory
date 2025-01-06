@@ -127,3 +127,33 @@ class BucketHandler:
         except Exception as e:
             logger.error(f"Error deleting object: {e}")
             return False
+        
+    def get_list_of_objects(self, company_id: str, folder_name: str) -> List[str]:
+        """Get a list of objects in a folder"""
+        try:
+            if not folder_name.endswith("/"):
+                folder_name += "/"
+
+            prefix = f"{company_id}/{folder_name}"
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.bucket_name,
+                Prefix=prefix,
+            )
+
+            if "Contents" not in response:
+                logger.error(f"No objects found in folder: {response}")
+                logger.error(f"No objects found in folder: {prefix}")
+                return []
+
+            objects = []
+            for obj in response["Contents"]:
+                key = obj["Key"]
+                if key == f"{company_id}/{folder_name}":
+                    continue
+                if key == folder_name:
+                    continue
+                objects.append(key)
+            return objects
+        except Exception as e:
+            logger.error(f"Error getting list of objects: {e}")
+            return None

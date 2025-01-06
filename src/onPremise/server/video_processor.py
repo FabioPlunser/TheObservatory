@@ -4,7 +4,13 @@ import numpy as np
 import logging
 import time
 import torch
+import uuid
+import aiohttp
+import asyncio
+
 from logging_config import setup_logger
+from person_tracker import TrackedPerson, PersonTracker
+from nats_client import NatsClient, SharedNatsClient, Commands
 
 setup_logger()
 logger = logging.getLogger("VideoProcessor")
@@ -46,8 +52,74 @@ def read_frames(url: str, frame_queue: mp.Queue, stop_event: mp.Event):
     logger.info("Frame reader stopped")
 
 
-def process_frames(frame_queue: mp.Queue, output_queue: mp.Queue, stop_event: mp.Event):
+async def handle_face_recognition(
+    nats_client: NatsClient,
+    company_id: str,
+    camera_id: str,
+    person: TrackedPerson,
+    face_image: np.ndarray,
+):
+    """Handle the face recognition process through NATS"""
+    try:
+        nats_client = SharedNatsClient.get_instance()
+        # Generate face ID if not exists
+        if not person.face_id:
+            person.face_id = str(uuid.uuid4())
+
+        # Get presigned URL for upload
+        response = await nats_client.send_message_with_reply(
+            Commands.GET_PRESIGNED_UPLOAD_UNKNOWN_FACE_URL.value,
+            {
+                "company_id": company_id,
+                "face_id": person.face_id,
+            },
+        )
+
+        if not response or not response.get("success"):
+            logger.error("Failed to get presigned URL")
+            return
+
+        # Upload the image
+        _, img_encoded = cv2.imencode(".jpg", face_image)
+        img_bytes = img_encoded.tobytes()
+
+        async with aiohttp.ClientSession() as session:
+            async with session.put(response["url"], data=img_bytes) as resp:
+                if resp.status != 200:
+                    logger.error("Failed to upload face image")
+                    return
+
+        # Request recognition
+        person.recognition_status = "in_progress"
+        recognition_response = await nats_client.send_message_with_reply(
+            Commands.EXECUTE_RECOGNITION.value,
+            {
+                "company_id": company_id,
+                "camera_id": camera_id,
+                "face_id": person.face_id,
+                "track_id": person.track_id,
+            },
+        )
+
+        if not recognition_response or not recognition_response.get("success"):
+            logger.error("Failed to start recognition")
+            person.recognition_status = "pending"
+            return
+
+    except Exception as e:
+        logger.error(f"Error in face recognition: {e}")
+        person.recognition_status = "pending"
+
+
+def process_frames(
+    frame_queue: mp.Queue,
+    output_queue: mp.Queue,
+    company_id: str,
+    camera_id: str,
+    stop_event: mp.Event,
+):
     """Process function to run YOLO detection on frames"""
+    loop = None
     try:
         # Import YOLO here inside the process
         from ultralytics import YOLO
@@ -72,97 +144,146 @@ def process_frames(frame_queue: mp.Queue, output_queue: mp.Queue, stop_event: mp
         # Add some debug info about model device
         logger.info(f"Model is on device: {next(model.parameters()).device}")
 
+        person_tracker = PersonTracker()
+
+        nats_client = SharedNatsClient.get_instance()
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
         while not stop_event.is_set():
             try:
                 frame = frame_queue.get(timeout=1)
             except:
                 continue
 
-            try:
-                # Run YOLO detection with explicit device
-                results = model(
-                    frame,
-                    device=device,
-                    verbose=False,
+            # Run YOLO detection with explicit device
+            results = model(
+                frame,
+                device=device,
+                verbose=False,
+            )
+
+            boxes = []
+            scores = []
+            for result in results:
+                for box in result.boxes:
+                    if box.cls.cpu().numpy()[0] == 0:  # Person class
+                        boxes.append(box.xyxy[0].cpu().numpy())  # [x1, y1, x2, y2]
+                        scores.append(
+                            float(box.conf.cpu().numpy()[0])
+                        )  # confidence score
+
+            if boxes:  # Only update if we have detections
+                boxes = np.array(boxes)
+                scores = np.array(scores)
+
+                # Update tracker
+                current_time = time.time()
+                updated_tracks, new_tracks = person_tracker.update(
+                    frame, boxes, scores, current_time
                 )
 
-                # Draw boxes for detected persons
-                for result in results:
-                    for box in result.boxes:
-                        if box.cls.cpu().numpy()[0] == 0:  # Person class
-                            coords = box.xyxy[0].cpu().numpy()
-                            conf = float(box.conf.cpu().numpy()[0])
-
-                            cv2.rectangle(
-                                frame,
-                                (int(coords[0]), int(coords[1])),
-                                (int(coords[2]), int(coords[3])),
-                                (0, 255, 0),
-                                2,
+                # Handle face recognition for new and updated tracks
+                for track in new_tracks + updated_tracks:
+                    if track.recognition_status == "pending":
+                        loop.create_task(
+                            handle_face_recognition(
+                                nats_client,
+                                company_id,
+                                camera_id,
+                                track,
+                                track.face_image,
                             )
+                        )
 
-                            cv2.putText(
-                                frame,
-                                f"Person {conf:.2f}",
-                                (int(coords[0]), int(coords[1] - 10)),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.5,
-                                (0, 255, 0),
-                                2,
-                            )
+            # Draw results on frame
+            for person in person_tracker.tracked_persons.values():
+                bbox = person.bbox
+                # Draw bounding box
+                cv2.rectangle(
+                    frame,
+                    (int(bbox[0]), int(bbox[1])),
+                    (int(bbox[2]), int(bbox[3])),
+                    (0, 255, 0),
+                    2,
+                )
 
-                # Convert to bytes for WebSocket transmission
-                _, buffer = cv2.imencode(".jpg", frame)
-                frame_bytes = buffer.tobytes()
+                # Draw ID and status
+                status_color = {
+                    "pending": (0, 255, 255),  # Yellow
+                    "in_progress": (0, 165, 255),  # Orange
+                    "recognized": (0, 255, 0),  # Green
+                    "unknown": (0, 0, 255),  # Red
+                }.get(person.recognition_status, (255, 255, 255))
 
-                # Update output queue
-                if output_queue.full():
-                    try:
-                        output_queue.get_nowait()
-                    except:
-                        pass
+                cv2.putText(
+                    frame,
+                    f"ID: {person.track_id} ({person.recognition_status})",
+                    (int(bbox[0]), int(bbox[1] - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    status_color,
+                    2,
+                )
+
+            # Convert to bytes for WebSocket transmission
+            _, buffer = cv2.imencode(".jpg", frame)
+            frame_bytes = buffer.tobytes()
+
+            if output_queue.full():
                 try:
-                    output_queue.put_nowait(frame_bytes)
+                    output_queue.get_nowait()
                 except:
                     pass
+            try:
+                output_queue.put_nowait(frame_bytes)
+            except:
+                pass
 
-            except Exception as e:
-                logger.error(f"Error processing frame: {e}")
-                continue
+            # Process any pending tasks
+            loop.run_until_complete(asyncio.sleep(0))
 
     except Exception as e:
-        logger.error(f"Error in YOLO processor: {e}")
+        logger.error(f"Error in frame processor: {e}")
     finally:
-        logger.info("YOLO processor stopped")
+        if loop:
+            loop.close()
+        logger.info("Frame processor stopped")
 
 
 class VideoProcessor:
-    def __init__(self, rtsp_url: str):
+    def __init__(self, rtsp_url: str, company_id: str, camera_id: str):
         self.rtsp_url = rtsp_url
-        # Use multiprocessing.Queue() instead of Queue(maxsize=10)
+        self.company_id = company_id
+        self.camera_id = camera_id
         self.frame_queue = mp.Queue(maxsize=10)
         self.output_queue = mp.Queue(maxsize=10)
         self.stop_event = mp.Event()
         self.reader_process = None
-        self.yolo_process = None
+        self.processor_process = None
 
     def start(self):
         """Start both reader and processor processes"""
         try:
-            # Create processes with only serializable arguments
             self.reader_process = mp.Process(
                 target=read_frames,
                 args=(self.rtsp_url, self.frame_queue, self.stop_event),
             )
 
-            self.yolo_process = mp.Process(
+            self.processor_process = mp.Process(
                 target=process_frames,
-                args=(self.frame_queue, self.output_queue, self.stop_event),
+                args=(
+                    self.frame_queue,
+                    self.output_queue,
+                    self.company_id,
+                    self.camera_id,
+                    self.stop_event,
+                ),
             )
 
             self.reader_process.start()
-            self.yolo_process.start()
-
+            self.processor_process.start()
             logger.info("Started video processor processes")
 
         except Exception as e:
@@ -178,30 +299,23 @@ class VideoProcessor:
             return None
 
     def stop(self):
-        """Stop all processes"""
         logger.info("Stopping video processor")
-
         try:
-            # Signal processes to stop
             self.stop_event.set()
 
-            # Clean up processes with timeout
-            for process_name, process in [
-                ("reader", self.reader_process),
-                ("YOLO", self.yolo_process),
-            ]:
-
+            for process in [self.reader_process, self.processor_process]:
                 if process and process.is_alive():
                     process.terminate()
-                    logger.info(f"Stopping {process_name} process...")
-                    process.kill()
+                    process.join(timeout=1)
+                    if process.is_alive():
+                        process.kill()
 
             logger.info("Video processor stopped successfully")
 
         except Exception as e:
             logger.error(f"Error stopping video processor: {e}")
-            # Emergency cleanup - make sure processes are really dead
-            for process in [self.reader_process, self.yolo_process]:
+            # Emergency cleanup
+            for process in [self.reader_process, self.processor_process]:
                 if process and process.is_alive():
                     try:
                         process.kill()

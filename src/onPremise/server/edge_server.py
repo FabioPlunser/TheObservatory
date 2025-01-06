@@ -13,6 +13,7 @@ import asyncio
 import logging
 import multiprocessing
 import os
+import json
 
 setup_logger()
 logger = logging.getLogger("EdgeServer")
@@ -162,9 +163,9 @@ class EdgeServer:
         try:
             # Stop existing processor if any
             await self.stop_camera_stream(camera_id)
-
+            company_id = await self.db.get_company_id()
             # Create and start new processor
-            processor = VideoProcessor(rtsp_url)
+            processor = VideoProcessor(rtsp_url, company_id, camera_id)
             self.processors[camera_id] = processor
             processor.start()
 
@@ -241,3 +242,61 @@ class EdgeServer:
         except Exception as e:
             logger.error(f"Error getting frame: {e}")
             return None
+
+    async def _setup_aler_subscription(self):
+        """Setup subscription for face recognition alerts"""
+        nats_client = SharedNatsClient.get_instance()
+        try:
+            company_id = await self.db.get_company_id()
+            if company_id:
+                # Subscribe to face recognition alerts
+                await nats_client.add_subscription(
+                    f"{Commands.ALARM.value}.{company_id}", self._handle_alert
+                )
+        except Exception as e:
+            logger.error(f"Error setting up alert subscription: {e}")
+
+    async def _handle_alert(self, msg):
+        """Handle incoming face regonition alerts"""
+        nats_client = SharedNatsClient.get_instance()
+        try:
+            data = json.loads(msg.data.decode())
+            alert_type = data.get("type")
+            camera_id = data.get("camera_id")
+            company_id = data.get("company_id")
+
+            # Verify this aler is for one of our cameras
+            if camera_id not in self.cameras:
+                # Not our camera, republish for other edge server
+                await nats_client.publish_message(
+                    f"{Commands.ALARM.value}.{company_id}", msg.data
+                )
+                return
+
+            if alert_type == "unknown_face":
+                face_id = data.get("face_id")
+                track_id = data.get("track_id")
+
+                if camera_id in self.processors:
+                    processor = self.processors[camera_id]
+                    if hasattr(processor, "person_tracker"):
+                        if track_id in processor.person_tracker.tracked_person:
+                            person = processor.person_tracker.tracked_persons[track_id]
+                            person_recogintion_status = "unknonw"
+
+            logger.info(f"Received alert for camera {camera_id}: {alert_type}")
+
+            alarms = self.db.get_all_alarms()
+            for alarm in alarms:
+                alarm_ws = self.alarms[alarm["id"]].get("websocket")
+                if alarm_ws:
+                    await alarm_ws.send_json(
+                        {
+                            "type": "alarm_trigger",
+                            "camera_id": camera_id,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+
+        except Exception as e:
+            logger.error(f"Error handling alert: {e}")

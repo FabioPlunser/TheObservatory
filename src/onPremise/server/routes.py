@@ -23,14 +23,14 @@ import json
 import os
 import ipaddress
 
-
+setup_logger()
+logger = logging.getLogger("Router")
 
 
 class Router:
     def __init__(self, edge_server: EdgeServer, db: Database):
         self.edge_server = edge_server
         self.db = db
-
         self._retry_running = True
 
     async def get_nats_client(self):
@@ -51,7 +51,6 @@ class Router:
         @router.get("/api/get-company")
         async def get_company():
             company = await self.db.get_company()
-            logger.info(f"Companjy: {company}")
             return {
                 "company": company,
             }
@@ -143,7 +142,6 @@ class Router:
 
             try:
                 await websocket.accept()
-
                 while True:
                     try:
                         # Check for client messages (non-blocking)
@@ -160,6 +158,9 @@ class Router:
                         frame_bytes = await self.edge_server.get_frame(camera_id)
                         if frame_bytes is not None:
                             await websocket.send_bytes(frame_bytes)
+                        self.edge_server.cameras[camera_id][
+                            "last_seen"
+                        ] = datetime.now()
 
                         # Control frame rate (approximately 30 FPS)
                         await asyncio.sleep(0.033)
@@ -182,23 +183,25 @@ class Router:
             try:
                 alarm_id = registration_data["alarm_id"]
 
-                existing_alarm = await self.db.get_alarm_device(alarm_id)
+                existing_alarm = await self.db.get_alarm(alarm_id)
                 if existing_alarm:
                     logger.info(f"alarm {alarm_id} already registered, updating status")
                     self.edge_server.alarms[alarm_id] = {
-                        "registration_time": datetime.now(),
+                        "alarm_data": existing_alarm,
+                        "websocket": None,
+                        "last_seen": datetime.now(),
                         "status": "registered",
                     }
                     return {"status": "success", "message": "alarm reconnected"}
 
+                alarm = await self.db.create_alarm(alarm_id, "registered")
+
                 self.edge_server.alarms[alarm_id] = {
-                    "registration_time": datetime.now(),
+                    "alarm_data": alarm,
+                    "websocket": None,
+                    "last_seen": datetime.now(),
                     "status": "registered",
                 }
-
-                await self.db.create_alarm_device(
-                    alarm_id, registration_data["name"], "registered"
-                )
 
                 logger.info(f"alarm {alarm_id} registered")
                 return {"status": "success", "message": "alarm registered"}
@@ -233,7 +236,7 @@ class Router:
         # ----------------------------------------------------------------------------
         @router.get("/api/get-alarms")
         async def get_alarms():
-            return await self.db.get_alarms()
+            return await self.db.get_all_alarms()
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
@@ -458,6 +461,8 @@ class Router:
 
             return response
 
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
         @router.post("/api/faces/unknown/delete/all")
         async def delete_all_unknown_faces():
             """Delete all unknown face images from the cloud storage."""
@@ -478,5 +483,27 @@ class Router:
                 raise HTTPException(status_code=500, detail="Error deleting faces")
 
             return response
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.websocket("/ws/alarms/{alarm_id}")
+        async def alarm_websocket(websocket: WebSocket, alarm_id: str):
+            if alarm_id not in self.edge_server.alarms:
+                await websocket.close(code=4004, reason="Alarm not found")
+                return
+
+            try:
+                await websocket.accept()
+
+                self.edge_server.alarms[alarm_id]["websocket"] = websocket
+                while True:
+                    try:
+                        await asyncio.sleep(0.1)  # Keep connection alive
+                    except WebSocketDisconnect:
+                        break
+            except Exception as e:
+                logger.error(f"WebSocket error: {e}")
+            finally:
+                logger.info(f"WebSocket connection closed for alarm {alarm_id}")
 
         return router

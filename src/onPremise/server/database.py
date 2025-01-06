@@ -34,10 +34,13 @@ class Room(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
 
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    alarm_active = Column(Boolean, default=False)
+
     # Relationships
     cameras = relationship("Camera", back_populates="room")
     alarms = relationship("Alarm", back_populates="room")
-    alarm_devices = relationship("AlarmDevice", back_populates="room")
 
 
 class Camera(Base):
@@ -62,24 +65,13 @@ class Alarm(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     camera_id = Column(String, ForeignKey("cameras.id"))
     room_id = Column(Integer, ForeignKey("rooms.id"))
-    timestamp = Column(DateTime)
+    last_seen = Column(DateTime)
+    status = Column(String)
     active = Column(Boolean)
 
     # Relationships
     camera = relationship("Camera", back_populates="alarms")
     room = relationship("Room", back_populates="alarms")
-
-
-class AlarmDevice(Base):
-    __tablename__ = "alarm_devices"
-
-    id = Column(String, primary_key=True)
-    name = Column(String)
-    room_id = Column(Integer, ForeignKey("rooms.id"))
-    timestamp = Column(DateTime)
-
-    # Relationships
-    room = relationship("Room", back_populates="alarm_devices")
 
 
 class KnownFace(Base):
@@ -291,13 +283,72 @@ class Database:
                 camera.room_id = room_id
                 await session.commit()
 
-    async def assign_alarm_device_room(self, alarm_device_id: str, room_id: int):
+    async def get_room_camera(self, room_id: int) -> List[Dict]:
         async with self.async_session() as session:
-            stmt = select(AlarmDevice).where(AlarmDevice.id == alarm_device_id)
+            stmt = select(Camera).where(Camera.room_id == room_id)
             result = await session.execute(stmt)
-            alarm_device = result.scalar_one_or_none()
-            if alarm_device:
-                alarm_device.room_id = room_id
+            cameras = result.scalars().all()
+            return [camera.__dict__ for camera in cameras]
+
+    async def create_alarm(
+        self,
+        alarm_id: str,
+        status: str,
+    ) -> Alarm:
+        async with self.async_session() as session:
+            alarm = Alarm(
+                id=alarm_id,
+                camera_id=None,
+                room_id=None,
+                last_seen=datetime.now(),
+                status=status,
+                active=False,
+            )
+            session.add(alarm)
+            await session.commit()
+            return alarm
+
+    async def delete_alarm(self, alarm_id: int):
+        async with self.async_session() as session:
+            stmt = select(Alarm).where(Alarm.id == alarm_id)
+            result = await session.execute(stmt)
+            alarm = result.scalar_one_or_none()
+            if alarm:
+                await session.delete(alarm)
+                await session.commit()
+
+    async def set_alarm_active(self, alarm_id: int, active: bool):
+        async with self.async_session() as session:
+            stmt = select(Alarm).where(Alarm.id == alarm_id)
+            result = await session.execute(stmt)
+            alarm = result.scalar_one_or_none()
+            if alarm:
+                alarm.active = active
+                await session.commit()
+
+    async def get_alarm(self, alarm_id: int) -> Optional[Dict]:
+        async with self.async_session() as session:
+            stmt = select(Alarm).where(Alarm.id == alarm_id)
+            result = await session.execute(stmt)
+            alarm = result.scalar_one_or_none()
+            if alarm:
+                return alarm.__dict__
+            return None
+
+    async def get_all_alarms(self) -> List[Dict]:
+        async with self.async_session() as session:
+            stmt = select(Alarm)
+            result = await session.execute(stmt)
+            alarms = result.scalars().all()
+            return [alarm.__dict__ for alarm in alarms]
+
+    async def set_room_alarm_status(self, room_id: int, active: bool):
+        async with self.async_session() as session:
+            stmt = select(Room).where(Room.id == room_id)
+            result = await session.execute(stmt)
+            room = result.scalar_one_or_none()
+            if room:
+                room.alarm_active = active
                 await session.commit()
 
     async def get_alarms(self) -> List[Dict]:
@@ -320,40 +371,6 @@ class Database:
             result = await session.execute(stmt)
             alarms = result.scalars().all()
             return [alarm.__dict__ for alarm in alarms]
-
-    async def create_alarm_device(self, alarm_device_id: str, name: str) -> AlarmDevice:
-        async with self.async_session() as session:
-            alarm_device = AlarmDevice(
-                id=alarm_device_id, name=name, timestamp=datetime.now()
-            )
-            session.add(alarm_device)
-            await session.commit()
-            return alarm_device
-
-    async def delete_alarm_device(self, alarm_device_id: str):
-        async with self.async_session() as session:
-            stmt = select(AlarmDevice).where(AlarmDevice.id == alarm_device_id)
-            result = await session.execute(stmt)
-            alarm_device = result.scalar_one_or_none()
-            if alarm_device:
-                await session.delete(alarm_device)
-                await session.commit()
-
-    async def get_alarm_devices(self) -> List[Dict]:
-        async with self.async_session() as session:
-            stmt = select(AlarmDevice)
-            result = await session.execute(stmt)
-            devices = result.scalars().all()
-            return [device.__dict__ for device in devices]
-
-    async def get_alarm_device(self, alarm_device_id: str) -> Optional[Dict]:
-        async with self.async_session() as session:
-            stmt = select(AlarmDevice).where(AlarmDevice.id == alarm_device_id)
-            result = await session.execute(stmt)
-            device = result.scalar_one_or_none()
-            if device:
-                return device.__dict__
-            return None
 
     async def create_known_face(self, face_id: str, s3_key: str) -> KnownFace:
         async with self.async_session() as session:
