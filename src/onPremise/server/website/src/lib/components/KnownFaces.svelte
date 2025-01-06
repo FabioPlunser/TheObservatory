@@ -107,6 +107,8 @@
       {/each}
     </div>
   {:else}
-    <h1 class="flex justify-center mx-auto font-bold text-2xl">No known faces found</h1>
+    <h1 class="flex justify-center mx-auto font-bold text-2xl">
+      No known faces found
+    </h1>
   {/if}
 </div>

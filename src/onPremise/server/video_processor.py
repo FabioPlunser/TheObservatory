@@ -4,19 +4,16 @@ import numpy as np
 import logging
 import time
 import torch
+from logging_config import setup_logger
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="Video_Processor: %(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
-)
-
-logger = logging.getLogger(__name__)
+setup_logger()
+logger = logging.getLogger("VideoProcessor")
 
 
 def read_frames(url: str, frame_queue: mp.Queue, stop_event: mp.Event):
     """Process function to read frames from RTSP stream"""
     logger.info(f"Starting frame reader for {url}")
+    time.sleep(5)  # Wait for 5 seconds before starting the frame reader
     cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
 
     if not cap.isOpened():

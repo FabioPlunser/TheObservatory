@@ -5,6 +5,7 @@ from video_processor import VideoProcessor
 from typing import Dict, Set
 from database import Database
 from nats_client import SharedNatsClient, Commands
+from logging_config import setup_logger
 
 import socket
 import platform
@@ -13,13 +14,8 @@ import logging
 import multiprocessing
 import os
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="Edge_server: %(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
-)
-
-logger = logging.getLogger(__name__)
+setup_logger()
+logger = logging.getLogger("EdgeServer")
 
 
 class EdgeServer:

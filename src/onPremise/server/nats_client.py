@@ -6,16 +6,10 @@ import json
 
 from enum import Enum
 from typing import Optional
+from logging_config import setup_logger
 
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="Nats_Client: %(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
-)
-
-
-logger = logging.getLogger(__name__)
+setup_logger()
+logger = logging.getLogger("NatsClient")
 
 
 class NatsClient:

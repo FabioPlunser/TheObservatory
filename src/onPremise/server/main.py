@@ -7,6 +7,7 @@ from edge_server import EdgeServer
 from database import Database
 from routes import Router
 from nats_client import SharedNatsClient
+from logging_config import setup_logger
 
 import os
 import logging
@@ -14,14 +15,8 @@ import asyncio
 import signal
 import psutil  # Make sure to pip install psutil
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="Main.py: %(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
-)
-
-logger = logging.getLogger(__name__)
+setup_logger()
+logger = logging.getLogger("Main")
 
 PORT = 8000
 edge_server = EdgeServer(PORT)

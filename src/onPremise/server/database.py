@@ -15,6 +15,12 @@ from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.future import select
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
+from logging_config import setup_logger
+
+import logging
+
+setup_logger()
+logger = logging.getLogger("Database")
 
 import uuid
 

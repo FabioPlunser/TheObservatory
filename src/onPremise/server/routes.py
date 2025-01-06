@@ -13,6 +13,7 @@ from datetime import datetime
 from edge_server import EdgeServer
 from database import Database
 from nats_client import SharedNatsClient, Commands
+from logging_config import setup_logger
 
 import asyncio
 import aiohttp
@@ -22,12 +23,7 @@ import json
 import os
 import ipaddress
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="Routes: %(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
-)
-logger = logging.getLogger(__name__)
+
 
 
 class Router:
