@@ -8,17 +8,25 @@ from fastapi import (
     UploadFile,
     File,
 )
+from typing import List
 from datetime import datetime
 from edge_server import EdgeServer
 from database import Database
-from nats_client import NatsClient
+from nats_client import SharedNatsClient, Commands
 
 import asyncio
 import aiohttp
 import logging
 import uuid
+import json
 import os
+import ipaddress
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="Routes: %(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
+)
 logger = logging.getLogger(__name__)
 
 
@@ -26,10 +34,67 @@ class Router:
     def __init__(self, edge_server: EdgeServer, db: Database):
         self.edge_server = edge_server
         self.db = db
-        self.nats_client = NatsClient(os.getenv("CLOUD_URL"))
+
+        self._retry_running = True
+
+    async def get_nats_client(self):
+        """Get or wait for NATS client"""
+        retry_delay = 5
+        while self._retry_running:
+            nats_client = SharedNatsClient.get_instance()
+            if nats_client and nats_client._connected:
+                return nats_client
+            await asyncio.sleep(retry_delay)
+        return None
 
     def create_routes(self) -> APIRouter:
         router = APIRouter()
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.get("/api/get-company")
+        async def get_company():
+            company = await self.db.get_company()
+            logger.info(f"Companjy: {company}")
+            return {
+                "company": company,
+            }
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.post("/api/update-cloud-url")
+        async def update_cloud_url(cloud_url: str):
+            """Update the cloud URL for the NATS client"""
+
+            def is_ip_address(ip_str):
+                try:
+                    ipaddress.ip_address(ip_str)
+                    return True
+                except ValueError:
+                    return False
+
+            try:
+                if not cloud_url:
+                    raise HTTPException(status_code=400, detail="Cloud URL is required")
+
+                if "http" in cloud_url:
+                    cloud_url = cloud_url.replace("http", "nats")
+                    cloud_url = cloud_url + ":4222"
+                if "https" in cloud_url:
+                    cloud_url = cloud_url.replace("https", "nats")
+                    cloud_url = cloud_url + ":4222"
+                elif is_ip_address(cloud_url):
+                    cloud_url = "nats://" + cloud_url + ":4222"
+
+                await self.db.update_cloud_url(cloud_url)
+
+                await SharedNatsClient.update_url(cloud_url)
+
+                return {"status": "success", "message": "Cloud URL updated"}
+
+            except Exception as e:
+                logger.error(f"Error updating cloud URL: {e}")
+                raise HTTPException(status_code=500, detail="Error updating cloud URL")
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
@@ -249,55 +314,173 @@ class Router:
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
-        @router.post("/api/faces/upload")
-        async def upload_known_face(file: UploadFile = File(...)):
-            """Upload a known face image to the cloud storage."""
+        @router.post("/api/faces/known/upload")
+        async def upload_known_face(files: List[UploadFile] = File(...)):
+            """Upload known face images to the cloud storage."""
             try:
-                image_data = await file.read()
+                results = []
+                for file in files:
+                    try:
+                        image_data = await file.read()
+                        face_id = str(uuid.uuid4())
 
-                face_id = str(uuid.uuid4())
-
-                response = await self.nats_client.send_message(
-                    "presigned_upload_known_face",
-                    {
-                        "company_id": self.db.get_company_id(),
-                        "face_id": face_id,
-                        "image_data": image_data,
-                    },
-                )
-
-                if not response.get("success"):
-                    raise HTTPException(status_code=500, detail="Error uploading face")
-
-                # Upload image using presigned URL
-                async with aiohttp.ClientSession() as session:
-                    async with session.put(response["url"], data=image_data) as resp:
-                        if resp.status != 200:
+                        nats_client = await self.get_nats_client()
+                        if not nats_client:
                             raise HTTPException(
-                                status_code=500, detail="Error uploading face"
+                                status_code=500, detail="NATS client not available"
                             )
 
-                # Create local dataase entry
-                known_face = await self.db.create_known_face(
-                    face_id, s3_key=response["s3_key"]
-                )
+                        # Get company ID first
+                        company_id = await self.db.get_company_id()
+                        if not company_id:
+                            raise HTTPException(
+                                status_code=400, detail="Company ID not found"
+                            )
 
-                # Notify cloud that upload has completed
-                confirmation = await self.nats_client.send_message(
-                    "confirm_known_face_upload",
-                    {
-                        "company_id": self.db.get_company_id(),
-                        "face_id": face_id,
-                    },
-                )
+                        # Get presigned URL from NATS
+                        response = await nats_client.send_message_with_reply(
+                            Commands.GET_PRESIGNED_UPLOAD_KNOWN_FACE_URL.value,
+                            {
+                                "company_id": company_id,
+                                "face_id": face_id,
+                            },
+                        )
 
-                if not confirmation.get("success"):
-                    await self.db.delete_known_face(face_id)
-                    raise HTTPException(
-                        status_code=500, detail="Error confirming face upload"
-                    )
+                        if not response:
+                            raise HTTPException(
+                                status_code=500, detail="No response from cloud server"
+                            )
+
+                        if not response.get("success"):
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"Error getting upload URL: {response.get('error', 'Unknown error')}",
+                            )
+
+                        # Extract URL and any headers we need to include
+                        upload_url = response.get("url")
+                        if not upload_url:
+                            raise HTTPException(
+                                status_code=500, detail="No upload URL in response"
+                            )
+
+                        # Upload image using presigned URL
+                        async with aiohttp.ClientSession() as session:
+                            # Make sure to set the correct content type
+                            headers = {
+                                "Content-Type": "*",
+                            }
+
+                            async with session.put(
+                                upload_url,
+                                data=image_data,
+                                headers=headers,
+                                timeout=30,  # Increase timeout
+                            ) as resp:
+                                if resp.status != 200:
+                                    error_text = await resp.text()
+                                    logger.error(f"S3 upload failed: {error_text}")
+                                    raise HTTPException(
+                                        status_code=500,
+                                        detail=f"Error uploading to S3: {error_text}",
+                                    )
+
+                        # Create local database entry
+                        s3_key = response.get("s3_key")
+                        await self.db.create_known_face(face_id, s3_key=s3_key)
+
+                        results.append(
+                            {
+                                "face_id": face_id,
+                                "s3_key": s3_key,
+                                "success": True,
+                            }
+                        )
+
+                    except Exception as e:
+                        logger.error(f"Error processing file {file.filename}: {str(e)}")
+                        results.append(
+                            {
+                                "filename": file.filename,
+                                "success": False,
+                                "error": str(e),
+                            }
+                        )
+
+                # Return overall results
+                success = any(result["success"] for result in results)
+                return {"success": success, "uploaded_files": results}
+
             except Exception as e:
-                logger.error(f"Error generating S3 key: {e}")
-                raise HTTPException(status_code=500, detail="Error generating S3 key")
+                logger.error(f"Error in upload_known_face: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.get("/api/faces/known/all")
+        async def get_all_known_faces():
+            """Download a known face image from the cloud storage."""
+
+            nats_client = await self.get_nats_client()
+            if nats_client is None:
+                raise HTTPException(
+                    status_code=500, detail="NATS client not initialized"
+                )
+
+            response = await nats_client.send_message_with_reply(
+                Commands.GET_PRESIGNED_DOWNLOAD_ALL_KNOWN_FACES.value,
+                {
+                    "company_id": await self.db.get_company_id(),
+                },
+            )
+
+            if not response.get("success"):
+                raise HTTPException(status_code=500, detail="Error downloading face")
+
+            return response
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.post("/api/faces/known/delete")
+        async def delete_known_face(key: str):
+            """Delete a known face image from the cloud storage."""
+            nats_client = await self.get_nats_client()
+            if nats_client is None:
+                raise HTTPException(
+                    status_code=500, detail="NATS client not initialized"
+                )
+
+            response = await nats_client.send_message_with_reply(
+                Commands.DELETE_KNOWN_FACE.value,
+                {
+                    "key": key,
+                },
+            )
+
+            if not response.get("success"):
+                raise HTTPException(status_code=500, detail="Error deleting face")
+
+            return response
+
+        @router.post("/api/faces/unknown/delete/all")
+        async def delete_all_unknown_faces():
+            """Delete all unknown face images from the cloud storage."""
+            nats_client = await self.get_nats_client()
+            if nats_client is None:
+                raise HTTPException(
+                    status_code=500, detail="NATS client not initialized"
+                )
+
+            response = await nats_client.send_message_with_reply(
+                Commands.DELETE_UNKNOWN_FACE.value,
+                {
+                    "company_id": self.db.get_company_id(),
+                },
+            )
+
+            if not response.get("success"):
+                raise HTTPException(status_code=500, detail="Error deleting faces")
+
+            return response
 
         return router

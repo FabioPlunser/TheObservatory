@@ -4,12 +4,20 @@ from datetime import datetime
 from video_processor import VideoProcessor
 from typing import Dict, Set
 from database import Database
+from nats_client import SharedNatsClient, Commands
 
 import socket
 import platform
 import asyncio
 import logging
 import multiprocessing
+import os
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="Edge_server: %(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +31,79 @@ class EdgeServer:
         self.port = port
         self.reader_queue = multiprocessing.Queue()
         self.db = Database()
-
+        self.nats_client = SharedNatsClient.get_instance()
         self.active_streams = set()
+
+        self._bucket_init_task = None
+        self._bucket_init_running = False
+
+    async def init_bucket(self):
+        """Start the bucket initialization background task"""
+        if self._bucket_init_task is not None:
+            logger.info("Bucket initialization task already running")
+            return
+
+        self._bucket_init_running = True
+        self._bucket_init_task = asyncio.create_task(self._bucket_init_retry())
+        logger.info("Started bucket initialization background task")
+
+    async def _bucket_init_retry(self):
+        """Background task to retry bucket initialization until successful"""
+        retry_delay = 5  # Start with 5 second delay between retries
+
+        while self._bucket_init_running:
+            try:
+                self.nats_client = SharedNatsClient.get_instance()
+                company_id = await self.db.get_company_id()
+                company_init_bucket = await self.db.get_company_init_bucket()
+
+                if not company_id:
+                    logger.error("No company ID found in database")
+                    await asyncio.sleep(retry_delay)
+                    continue
+
+                if company_init_bucket:
+                    logger.info("Bucket already initialized")
+                    self._bucket_init_running = False
+                    break
+
+                if not self.nats_client:
+                    logger.error("NATS client not initialized bucket")
+                    await asyncio.sleep(retry_delay)
+                    continue
+
+                response = await self.nats_client.send_message_with_reply(
+                    Commands.INIT_BUCKET.value, {"company_id": company_id}
+                )
+
+                if response and response.get("success"):
+                    logger.info("Successfully initialized bucket")
+                    await self.db.update_company_init_bucket(True)
+                    self._bucket_init_running = False
+                    break
+                else:
+                    logger.error("Failed to initialize bucket")
+                    # Increase retry delay up to max_delay
+
+            except Exception as e:
+                logger.error(f"Error in bucket initialization: {e}")
+
+            await asyncio.sleep(retry_delay)
+
+        self._bucket_init_task = None
+        logger.info("Bucket initialization task completed")
+
+    async def stop_bucket_init(self):
+        """Stop the bucket initialization background task"""
+        if self._bucket_init_running:
+            self._bucket_init_running = False
+            if self._bucket_init_task:
+                try:
+                    self._bucket_init_task.cancel()
+                    await self._bucket_init_task
+                except asyncio.CancelledError:
+                    pass
+                self._bucket_init_task = None
 
     async def start_mdns(self):
         def register_service():

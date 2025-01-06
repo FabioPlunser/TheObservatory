@@ -5,6 +5,12 @@ import logging
 import time
 import torch
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="Video_Processor: %(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
+)
+
 logger = logging.getLogger(__name__)
 
 

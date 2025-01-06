@@ -3,7 +3,12 @@ import asyncio
 from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
 from zeroconf.asyncio import AsyncZeroconf
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="Edge_Server_Discovery: %(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
+)
+
 logger = logging.getLogger(__name__)
 
 class EdgeServerDiscovery(ServiceListener):

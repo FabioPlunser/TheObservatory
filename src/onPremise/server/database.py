@@ -113,10 +113,12 @@ class Company(Base):
     id = Column(
         String,
         primary_key=True,
-        default=lambda: str(uuid.uuid4()),
         unique=True,
         nullable=False,
     )
+    name = Column(String, nullable=True)
+    cloud_url = Column(String, nullable=True)
+    init_bucket = Column(Boolean, default=False)
 
 
 class Database:
@@ -130,6 +132,22 @@ class Database:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
+        company = await self.get_company()
+        if not company:
+            await self.create_company(None, None)
+
+    async def create_company(self, name: str, cloud_url: str):
+        async with self.async_session() as session:
+            company_id = str(uuid.uuid4())
+            company = Company(
+                id=company_id,
+                name=name,
+                cloud_url=cloud_url,
+            )
+            session.add(company)
+            await session.commit()
+            return company_id
+
     async def get_company_id(self) -> str:
         async with self.async_session() as session:
             stmt = select(Company)
@@ -137,6 +155,61 @@ class Database:
             company = result.scalar_one_or_none()
             if company:
                 return company.id
+            return None
+
+    async def get_company_init_bucket(self) -> bool:
+        async with self.async_session() as session:
+            stmt = select(Company)
+            result = await session.execute(stmt)
+            company = result.scalar_one_or_none()
+            if company:
+                return company.init_bucket
+            return None
+
+    async def update_company_init_bucket(self, init_bucket: bool):
+        async with self.async_session() as session:
+            stmt = select(Company)
+            result = await session.execute(stmt)
+            company = result.scalar_one_or_none()
+            if company:
+                company.init_bucket = init_bucket
+                await session.commit()
+
+    async def update_cloud_url(self, cloud_url: str):
+        async with self.async_session() as session:
+            stmt = select(Company)
+            result = await session.execute(stmt)
+            company = result.scalar_one_or_none()
+            if company:
+                company.cloud_url = cloud_url
+                await session.commit()
+
+    async def get_cloud_url(self) -> str:
+        async with self.async_session() as session:
+            stmt = select(Company)
+            result = await session.execute(stmt)
+            company = result.scalar_one_or_none()
+            if company:
+                return company.cloud_url
+            return None
+
+    async def update_company(self, company_id: str, cloud_url: str, cloud_api_key: str):
+        async with self.async_session() as session:
+            stmt = select(Company).where(Company.id == company_id)
+            result = await session.execute(stmt)
+            company = result.scalar_one_or_none()
+            if company:
+                company.cloud_url = cloud_url
+                company.cloud_api_key = cloud_api_key
+                await session.commit()
+
+    async def get_company(self) -> Dict:
+        async with self.async_session() as session:
+            stmt = select(Company)
+            result = await session.execute(stmt)
+            company = result.scalar_one_or_none()
+            if company:
+                return company.__dict__
             return None
 
     async def create_camera(

@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from edge_server import EdgeServer
 from database import Database
 from routes import Router
+from nats_client import SharedNatsClient
 
 import os
 import logging
@@ -13,7 +15,12 @@ import signal
 import psutil  # Make sure to pip install psutil
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="Main.py: %(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
+)
+
 logger = logging.getLogger(__name__)
 
 PORT = 8000
@@ -49,7 +56,17 @@ def signal_handler(signum, frame):
 async def lifespan(app: FastAPI):
     try:
         await db.init_db()
+
+        cloud_url = await db.get_cloud_url()
+        if cloud_url:
+            nats_client = await SharedNatsClient.initialize(cloud_url)
+            if not nats_client:
+                logger.error("Failed to initialize NATS client")
+        else:
+            logger.error("No cloud url found in database")
+
         await edge_server.start_mdns()
+        await edge_server.init_bucket()
 
         # Start cameras from database
         cameras = await db.get_cameras()
@@ -84,6 +101,13 @@ def create_app():
     BUILD_DIR = os.path.join(BASE_DIR, "website", "build")
     app.mount("/", StaticFiles(directory=BUILD_DIR, html=True), name="static")
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     return app
 
 

@@ -9,7 +9,7 @@
 
   function connectWebSocket() {
     const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const wsURL = `${wsProtocol}://${window.location.host}/ws/camera/${cameraId}`;
+    const wsURL = `${wsProtocol}://${import.meta.env.VITE_SERVER_URL.replace("http://", "")}/ws/camera/${cameraId}`;
 
     ws = new WebSocket(wsURL);
 

@@ -1,10 +1,10 @@
 import boto3
 import os
 import logging
-import fastAPI
 
 from botocore.config import Config
 from datetime import datetime, timedelta
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -13,18 +13,12 @@ class BucketHandler:
     def __init__(
         self,
         bucket_name: str,
-        aws_access_key_id: str = None,
-        aws_secret_access_key: str = None,
         region_name: str = None,
     ):
         self.bucket_name = bucket_name
-        self.aws_access_key_id = aws_access_key_id
-        self.aws_secret_access_key = aws_secret_access_key
         self.region_name = region_name
         self.s3 = boto3.client(
             "s3",
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
             region_name=region_name,
         )
 
@@ -32,8 +26,6 @@ class BucketHandler:
 
         self.s3_client = boto3.client(
             "s3",
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
             region_name=region_name,
             config=config,
         )
@@ -42,9 +34,7 @@ class BucketHandler:
         """Create a folder for a company in the bucket"""
         self.s3.put_object(Bucket=self.bucket_name, Key=f"{company_id}/")
         self.s3.put_object(Bucket=self.bucket_name, Key=f"{company_id}/known_faces/")
-        self.s3.put_object(
-            Bucket=self.bucket_name, Key=f"{company_id}/recognition_faces/"
-        )
+        self.s3.put_object(Bucket=self.bucket_name, Key=f"{company_id}/unknown_faces/")
 
     def generate_presigned_upload_url(
         self, company_id: str, object_key: str, expires_in: int = 3600
@@ -56,9 +46,9 @@ class BucketHandler:
                 Params={
                     "Bucket": self.bucket_name,
                     "Key": company_id + "/" + object_key,
-                    "ContentType": "image/jpeg",
+                    "ContentType": "*",
                 },
-                Expires_in=expires_in,
+                ExpiresIn=expires_in,
             )
             return url
 
@@ -77,7 +67,7 @@ class BucketHandler:
                     "Bucket": self.bucket_name,
                     "Key": company_id + "/" + object_key,
                 },
-                Expires_in=expires_in,
+                ExpiresIn=expires_in,
             )
             return url
 
@@ -85,46 +75,55 @@ class BucketHandler:
             logger.error(f"Error generating presigned URL: {e}")
             return None
 
-    def generate_presigned_download_all_known_faces_url(
-        self, company_id: str, expires_in: int = 3600
-    ) -> str:
-        """Generate a presigned URL for downloading all known faces from the bucket"""
+    def generate_list_presigned_url_of_key(
+        self, company_id: str, folder_name: str, expires_in: int = 3600
+    ) -> List[str]:
+        """Genereate a list of presigned ULRs for all items in a folder"""
         try:
-            url = self.s3_client.generate_presigned_url(
-                "get_object",
-                Params={
-                    "Bucket": self.bucket_name,
-                    "Key": company_id + "/known_faces/",
-                },
-                Expires_in=expires_in,
-            )
-            return url
+            if not folder_name.endswith("/"):
+                folder_name += "/"
 
+            prefix = f"{company_id}/{folder_name}"
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.bucket_name,
+                Prefix=prefix,
+            )
+
+            if "Contents" not in response:
+                logger.error(f"No objects found in folder: {response}")
+                logger.error(f"No objects found in folder: {prefix}")
+                return []
+
+            urls = []
+            for obj in response["Contents"]:
+                key = obj["Key"]
+                if key == f"{company_id}/{folder_name}":
+                    continue
+                if key == folder_name:
+                    continue
+                url = self.s3_client.generate_presigned_url(
+                    "get_object",
+                    Params={
+                        "Bucket": self.bucket_name,
+                        "Key": key,
+                    },
+                    ExpiresIn=expires_in,
+                )
+                urls.append(
+                    {
+                        "url": url,
+                        "key": key,
+                    }
+                )
+            return urls
         except Exception as e:
             logger.error(f"Error generating presigned URL: {e}")
             return None
 
-    def generate_presigned_download_all_recognition_faces_url(
-        self, company_id: str, expires_in: int = 3600
-    ) -> str:
-        """Generate a presigned URL for downloading all recognition faces from the bucket"""
-        try:
-            url = self.s3_client.generate_presigned_url(
-                "get_object",
-                Params={
-                    "Bucket": self.bucket_name,
-                    "Key": company_id + "/recognition_faces/",
-                },
-                Expires_in=expires_in,
-            )
-            return url
-
-        except Exception as e:
-            logger.error(f"Error generating presigned URL: {e}")
-            return None
-
-    def delete_face(self, company_id: str, face_id: str) -> None:
+    def delete_object(self, s3_key: str) -> None:
         """Delete a face from the bucket"""
-        self.s3.delete_object(
-            Bucket=self.bucket_name, Key=f"{company_id}/known_faces/{face_id}"
-        )
+        try:
+            self.s3.delete_object(Bucket=self.bucket_name, Key=f"{s3_key}")
+        except Exception as e:
+            logger.error(f"Error deleting object: {e}")
+            return False

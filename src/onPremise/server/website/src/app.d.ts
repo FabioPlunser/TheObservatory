@@ -13,6 +13,14 @@ declare global {
 		name: string;
 		component: any;
 	};
+
+	type Company = {
+		id: number;
+		name: string;
+		cloud_url: string;
+		cloud_api_key: string;
+		license_key?: string;
+	};
 }
 
 export { };

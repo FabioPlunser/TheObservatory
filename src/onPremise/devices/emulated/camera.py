@@ -10,7 +10,12 @@ import platform
 from datetime import datetime
 from edge_server_discover import EdgeServerDiscovery
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="Camera: %(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("log.log")],
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -314,7 +319,9 @@ class Camera:
             self.is_running = False
             logger.info(f"WebSocket connection closed for camera {self.camera_id}")
 
-    async def stream_frames(self, stop_event, websocket, frame_skip, effective_frame_rate, video_source=0):
+    async def stream_frames(
+        self, stop_event, websocket, frame_skip, effective_frame_rate, video_source=0
+    ):
         while self.is_running and (stop_event is None or not stop_event.is_set()):
             try:
                 for _ in range(frame_skip):
@@ -331,22 +338,30 @@ class Camera:
                     continue
 
                 # Resize frame to reduce data size
-                frame = cv2.resize(frame, (self.frame_width // 2, self.frame_height // 2))
+                frame = cv2.resize(
+                    frame, (self.frame_width // 2, self.frame_height // 2)
+                )
                 # Reduce quality to 50%
-                _, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])  
-                
+                _, buffer = cv2.imencode(
+                    ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50]
+                )
+
                 frame_data = base64.b64encode(buffer).decode("utf-8")
 
                 try:
-                    await websocket.send(json.dumps({
-                        "camera_id": self.camera_id,
-                        "timestamp": datetime.now().isoformat(),
-                        "frame": frame_data
-                    }))
+                    await websocket.send(
+                        json.dumps(
+                            {
+                                "camera_id": self.camera_id,
+                                "timestamp": datetime.now().isoformat(),
+                                "frame": frame_data,
+                            }
+                        )
+                    )
                 except Exception as e:
                     logger.error(f"Failed to send frame: {e}")
                     continue  # Skip this frame and try the next one
-                
+
                 await asyncio.sleep(1 / effective_frame_rate)
             except Exception as e:
                 logger.error(f"Streaming error: {e}")
