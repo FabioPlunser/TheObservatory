@@ -88,30 +88,55 @@ class SharedNatsClient:
             try:
                 logger.info(f"Initializing nats client with url: {nats_url}")
                 cls._instance = NatsClient(nats_url)
-                await cls._instance.connect()
+                # Add a timeout to the connection attempt
+                try:
+                    async with asyncio.timeout(5.0):  # 5 second timeout
+                        await cls._instance.connect()
+                except asyncio.TimeoutError:
+                    logger.error("NATS connection timed out")
+                    cls._instance = None
+                    return None
+                except Exception as e:
+                    logger.error(f"Failed to connect to NATS: {e}")
+                    cls._instance = None
+                    return None
+
                 if not cls._instance._connected:
-                    logger.error("Failed to connect to nats")
+                    logger.error("Failed to connect to NATS")
                     cls._instance = None
             except Exception as e:
-                logger.error(f"Failed to initialize nats client: {e}")
+                logger.error(f"Failed to initialize NATS client: {e}")
                 cls._instance = None
         return cls._instance
 
     @classmethod
     def get_instance(cls) -> Optional[NatsClient]:
         if not cls._instance:
-            logger.error("Nats client not initialized shared nats client")
+            logger.warning(
+                "NATS client not initialized"
+            )  # Changed from error to warning
         return cls._instance
 
     @classmethod
     async def update_url(cls, cloud_url: str):
-        logger.info(f"Updating nats client url to: {cloud_url}")
+        logger.info(f"Updating NATS client url to: {cloud_url}")
         if cls._instance is not None:
             # Close existing connection if it exists
             await cls._instance.close()
+
+        if cloud_url is None:
+            cls._instance = None
+            return None
+
         cls._instance = NatsClient(cloud_url)
-        cls._instance.nats_url = cloud_url
-        await cls._instance.connect()
+        try:
+            async with asyncio.timeout(5.0):  # 5 second timeout
+                await cls._instance.connect()
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.error(f"Failed to connect to NATS with new URL: {e}")
+            cls._instance = None
+            return None
+
         return cls._instance
 
 

@@ -4,6 +4,9 @@ import logging
 import aiohttp
 import websockets
 import platform
+import json
+import os
+
 from edge_server_discover import EdgeServerDiscovery
 from datetime import datetime
 
@@ -108,14 +111,17 @@ class Alarm:
         """Activate the alarm"""
         self.alarm_active = True
         logger.info("Alarm triggered!")
-        # Add hardware-specific alarm activation code here
-        # For example, activate buzzer, LED, etc.
+        while self.alarm_active:
+            if platform.system() == "Windows":
+                import winsound
+                winsound.Beep(1000, 1000)  # frequency=1000Hz, duration=1000ms
+            elif platform.system() == "Linux" or platform.system() == "Darwin":
+                os.system("play -nq -t alsa synth 1 sine 1000")  # Requires sox package
 
     async def stop_alarm(self):
         """Deactivate the alarm"""
         self.alarm_active = False
         logger.info("Alarm stopped")
-        # Add hardware-specific alarm deactivation code here
 
     async def start(self):
         """Start the alarm client"""

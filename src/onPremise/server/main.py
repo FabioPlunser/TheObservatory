@@ -54,11 +54,17 @@ async def lifespan(app: FastAPI):
 
         cloud_url = await db.get_cloud_url()
         if cloud_url:
-            nats_client = await SharedNatsClient.initialize(cloud_url)
-            if not nats_client:
-                logger.error("Failed to initialize NATS client")
+            try:
+                nats_client = await SharedNatsClient.initialize(cloud_url)
+                if not nats_client:
+                    logger.error("Failed to initialize NATS client, removing cloud URL")
+                    await db.update_cloud_url(None)
+            except Exception as e:
+                logger.error(f"Error connecting to NATS: {e}")
+                logger.info("Removing cloud URL due to connection failure")
+                await db.update_cloud_url(None)
         else:
-            logger.error("No cloud url found in database")
+            logger.info("No cloud url found in database")
 
         await edge_server.start_mdns()
         await edge_server.init_bucket()

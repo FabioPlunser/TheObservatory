@@ -6,7 +6,6 @@ from typing import Dict, Set
 from database import Database
 from nats_client import SharedNatsClient, Commands
 from logging_config import setup_logger
-
 import socket
 import platform
 import asyncio
@@ -45,7 +44,7 @@ class EdgeServer:
         logger.info("Started bucket initialization background task")
 
     async def _bucket_init_retry(self):
-        """Background task to retry bucket initialization until successful"""
+        """Background task to retry bucket initialization until successful and setup alert subscription"""
         retry_delay = 5  # Start with 5 second delay between retries
 
         while self._bucket_init_running:
@@ -72,6 +71,8 @@ class EdgeServer:
                 response = await self.nats_client.send_message_with_reply(
                     Commands.INIT_BUCKET.value, {"company_id": company_id}
                 )
+
+                await self._setup_alert_subscription()
 
                 if response and response.get("success"):
                     logger.info("Successfully initialized bucket")
@@ -103,54 +104,147 @@ class EdgeServer:
                 self._bucket_init_task = None
 
     async def start_mdns(self):
-        def register_service():
-            try:
-                self.zeroconf = Zeroconf()
+        """Start mDNS service registration with proper event loop handling"""
+        try:
+            # Initialize Zeroconf in the executor
+            def init_zeroconf():
+                try:
+                    self.zeroconf = Zeroconf()
+                    return True
+                except Exception as e:
+                    logger.error(f"Failed to initialize Zeroconf: {e}")
+                    return False
 
-                # Get all network interfaces
+            # Run Zeroconf initialization in executor since it's blocking
+            success = await asyncio.get_running_loop().run_in_executor(
+                self.executor, init_zeroconf
+            )
+            if not success:
+                logger.warning("Failed to initialize Zeroconf, continuing without mDNS")
+                return
+
+            # Get network interfaces
+            def get_network_interfaces():
                 local_ips = []
-                try:
-                    hostname = socket.gethostname()
-                    local_ips = socket.gethostbyname_ex(hostname)[2]
-                except socket.gaierror:
-                    # Fallback to a basic IP if hostname resolution fails
-                    local_ips = ["127.0.0.1"]
-
-                # Use the first non-localhost IP
-                local_ip = next(
-                    (ip for ip in local_ips if not ip.startswith("127.")), local_ips[0]
-                )
-
-                hostname = platform.node()
-
-                self.service_info = ServiceInfo(
-                    type_="_edgeserver._tcp.local.",
-                    name=f"EdgeServer._edgeserver._tcp.local.",
-                    addresses=[socket.inet_aton(local_ip)],
-                    port=self.port,
-                    properties={"version": "1.0", "server": "edge"},
-                    server=f"{hostname}.local.",
-                )
+                valid_interfaces = []
 
                 try:
-                    self.zeroconf.register_service(self.service_info)
+                    # Get all network interfaces
+                    import netifaces
+
+                    interfaces = netifaces.interfaces()
+
+                    for iface in interfaces:
+                        addrs = netifaces.ifaddresses(iface)
+                        # Check for IPv4 addresses
+                        if netifaces.AF_INET in addrs:
+                            for addr in addrs[netifaces.AF_INET]:
+                                ip = addr["addr"]
+                                if not ip.startswith("127."):
+                                    local_ips.append(ip)
+                                    valid_interfaces.append(iface)
+
+                    if not local_ips:
+                        # Fallback to hostname resolution if no valid interfaces found
+                        hostname = socket.gethostname()
+                        local_ips = socket.gethostbyname_ex(hostname)[2]
+                except ImportError:
+                    # Fallback if netifaces is not available
+                    logger.warning(
+                        "netifaces not installed, falling back to basic IP detection"
+                    )
+                    try:
+                        hostname = socket.gethostname()
+                        local_ips = socket.gethostbyname_ex(hostname)[2]
+                    except socket.gaierror:
+                        local_ips = ["127.0.0.1"]
+                        logger.warning("Hostname resolution failed, using localhost")
+
+                return local_ips, valid_interfaces
+
+            # Get interfaces in executor
+            (
+                local_ips,
+                valid_interfaces,
+            ) = await asyncio.get_running_loop().run_in_executor(
+                self.executor, get_network_interfaces
+            )
+
+            # Filter out localhost and select first valid IP
+            valid_ips = [ip for ip in local_ips if not ip.startswith("127.")]
+            if not valid_ips:
+                logger.warning("No valid non-localhost IPs found, using localhost")
+                local_ip = "127.0.0.1"
+            else:
+                local_ip = valid_ips[0]
+
+            hostname = platform.node()
+
+            # Create service info
+            def create_and_register_service():
+                try:
+                    service_info = ServiceInfo(
+                        type_="_edgeserver._tcp.local.",
+                        name=f"EdgeServer._edgeserver._tcp.local.",
+                        addresses=[socket.inet_aton(local_ip)],
+                        port=self.port,
+                        properties={
+                            "version": "1.0",
+                            "server": "edge",
+                            "interfaces": (
+                                ",".join(valid_interfaces)
+                                if valid_interfaces
+                                else "default"
+                            ),
+                        },
+                        server=f"{hostname}.local.",
+                    )
+
+                    self.service_info = service_info
+                    self.zeroconf.register_service(service_info)
+                    return True
+                except Exception as e:
+                    logger.error(f"Error in service registration: {e}")
+                    return False
+
+            # Register service with retry logic
+            max_retries = 3
+            for retry_count in range(max_retries):
+                success = await asyncio.get_running_loop().run_in_executor(
+                    self.executor, create_and_register_service
+                )
+
+                if success:
                     logger.info(
                         f"Successfully registered mDNS service on {local_ip}:{self.port}"
                     )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to register mDNS service: {e}. Server will continue without mDNS."
+                    break
+
+                if retry_count == max_retries - 1:
+                    logger.error(
+                        f"Failed to register mDNS service after {max_retries} attempts"
                     )
                     if hasattr(self, "zeroconf"):
-                        self.zeroconf.close()
+                        await asyncio.get_running_loop().run_in_executor(
+                            self.executor, self.zeroconf.close
+                        )
+                    return
 
-            except Exception as e:
                 logger.warning(
-                    f"Failed to start mDNS: {e}. Server will continue without mDNS."
+                    f"Retry {retry_count + 1}/{max_retries} for mDNS registration"
                 )
-                return
+                await asyncio.sleep(1)
 
-        await asyncio.get_event_loop().run_in_executor(self.executor, register_service)
+        except Exception as e:
+            logger.error(f"Critical error in mDNS registration: {e}")
+            # Ensure cleanup on critical failure
+            if hasattr(self, "zeroconf"):
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        self.executor, self.zeroconf.close
+                    )
+                except Exception as cleanup_error:
+                    logger.error(f"Error during cleanup: {cleanup_error}")
 
     async def stop_mdns(self):
         if self.zeroconf:
@@ -243,7 +337,7 @@ class EdgeServer:
             logger.error(f"Error getting frame: {e}")
             return None
 
-    async def _setup_aler_subscription(self):
+    async def _setup_alert_subscription(self):
         """Setup subscription for face recognition alerts"""
         nats_client = SharedNatsClient.get_instance()
         try:

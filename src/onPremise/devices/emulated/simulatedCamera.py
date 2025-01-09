@@ -1,66 +1,131 @@
 import os
 import asyncio
-from multiprocessing import Process, Event
-from camera import Camera
+import uuid
+import aiohttp
 import logging
+import platform
+from multiprocessing import Process, Event
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def start_simulated_camera(video_paths, stop_event):
-    camera = Camera()
-    camera.frame_rate = 1
-    
-    if not await camera.discover_edge_server():
-        logger.error("Failed to discover edge server")
-        return
+class SimulatedCamera:
+    def __init__(self):
+        self.camera_id = str(uuid.uuid4())
+        self.edge_server_url = None
+        self.rtsp_url = None
+        self.is_running = False
+        self.frame_rate = 30
+        self.frame_width = 640
+        self.frame_height = 480
+        self.os_type = platform.system().lower()
+        self.gpu_vendor = self._detect_gpu()
 
-    if not await camera.register_with_edge():
-        logger.error("Failed to register with edge server")
-        return
-    try:
-        await camera.start_streaming(video_paths=video_paths, stop_event=stop_event)
-    finally:
-        await camera.stop()
+    def _detect_gpu(self):
+        """Detect available GPU for encoding"""
+        try:
+            if self.os_type == "darwin":
+                import subprocess
+                result = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], 
+                                     capture_output=True, text=True)
+                return "apple_silicon" if "Apple" in result.stdout else None
+            elif self.os_type in ["linux", "windows"]:
+                import subprocess
+                result = subprocess.run(["nvidia-smi"], 
+                                     capture_output=True, 
+                                     shell=(self.os_type == "windows"))
+                return "nvidia" if result.returncode == 0 else None
+        except Exception as e:
+            logger.warning(f"GPU detection failed: {e}")
+            return None
 
-def run_camera_in_process(video_paths, stop_event):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_simulated_camera(video_paths, stop_event))
+    async def discover_edge_server(self):
+        """Discover edge server - using dummy URL for simulation"""
+        self.edge_server_url = "http://localhost:8080"  # Replace with your actual edge server discovery logic
+        return True
 
-def main():
-    dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data/video_sets'))
-    if not os.path.exists(dataset_dir):
-        logger.error("Dataset not found")
-        return
+    def get_ffmpeg_input_args(self, video_path):
+        """Get optimized FFmpeg input arguments for MP4 files"""
+        return [
+            "-re",  # Read input at native frame rate
+            "-i", video_path,
+            "-fflags", "nobuffer",
+            "-flags", "low_delay",
+            "-strict", "experimental",
+            "-fps_mode", "vfr"
+        ]
 
-    stop_events = []
-    processes = []
-    
-    for i in range(1, 7):  # Assuming 6 different cameras
-        video_paths = []
-        for set_num in range(1, 12):  # Assuming 11 sets
-            if i == 6 and set_num < 5:  # Skip sets 1 to 4 for the 6th camera
-                continue
-            video_path = os.path.join(dataset_dir, f'set_{set_num}', f'video{set_num}_{i}.avi')
-            if not os.path.exists(video_path):
-                break
-            video_paths.append(video_path)
-        stop_event = Event()
-        stop_events.append(stop_event)
-        process = Process(target=run_camera_in_process, args=(video_paths, stop_event))
-        processes.append(process)
-        process.start()
+    def get_ffmpeg_output_args(self, rtsp_url):
+        """Get optimized FFmpeg output arguments with GPU support"""
+        quality_args = [
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-profile:v", "baseline",
+            "-x264-params", "keyint=30:min-keyint=30:scenecut=0:force-cfr=1",
+            "-bufsize", "1M",
+            "-maxrate", "2M",
+            "-g", "30"
+        ]
 
-    try:
-        while True:
-            pass
-    except KeyboardInterrupt:
-        logger.info("Stopping all cameras...")
-        for stop_event in stop_events:
-            stop_event.set()
-        for process in processes:
-            process.join()
+        if self.gpu_vendor == "nvidia":
+            encoder_args = [
+                "-c:v", "h264_nvenc",
+                "-rc", "cbr_ld_hq",
+                "-zerolatency", "1",
+                "-gpu", "0"
+            ]
+        elif self.gpu_vendor == "apple_silicon":
+            encoder_args = [
+                "-c:v", "h264_videotoolbox",
+                "-allow_sw", "1",
+                "-realtime", "1"
+            ]
+        else:
+            encoder_args = ["-c:v", "libx264", "-threads", "4"]
 
-if __name__ == "__main__":
-    main()
+        output_args = [
+            "-pix_fmt", "yuv420p",
+            "-f", "rtsp",
+            "-rtsp_transport", "tcp",
+            "-muxdelay", "0.1"
+        ]
+
+        return encoder_args + quality_args + output_args + [rtsp_url]
+
+    async def start_streaming(self, video_path, stop_event):
+        """Start streaming from MP4 file"""
+        if not os.path.exists(video_path):
+            logger.error(f"Video file not found: {video_path}")
+            return
+
+        try:
+            logger.info(f"Starting MP4 stream: {video_path}")
+            
+            ffmpeg_command = [
+                "ffmpeg",
+                *self.get_ffmpeg_input_args(video_path),
+                *self.get_ffmpeg_output_args(self.rtsp_url)
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *ffmpeg_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            logger.info(f"FFmpeg process started for video: {video_path}")
+
+            async def log_output(stream, level):
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    decoded_line = line.decode("utf-8").strip()
+                    logger.log(level, decoded_line)
+
+            stdout_task = asyncio.create_task(log_output(process.stdout, logging.INFO))
+            stderr_task = asyncio.create_task(log_output(process.stderr, logging.ERROR))
+
+            try:
+                while not stop_event.is_set():
+                    if process.returncode is not None:

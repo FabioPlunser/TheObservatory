@@ -8,9 +8,11 @@ import uuid
 import aiohttp
 import asyncio
 
+from concurrent.futures import ThreadPoolExecutor
 from logging_config import setup_logger
 from person_tracker import TrackedPerson, PersonTracker
 from nats_client import NatsClient, SharedNatsClient, Commands
+from reid_implementation import SharedCrossCameraTracker
 
 setup_logger()
 logger = logging.getLogger("VideoProcessor")
@@ -26,7 +28,17 @@ def read_frames(url: str, frame_queue: mp.Queue, stop_event: mp.Event):
         logger.error("Failed to open RTSP stream")
         return
 
+    frame_counter = 0
+    skip_frames = 2
+
     while not stop_event.is_set():
+        frame_counter += 1
+
+        # Skip frames to reduce processing load
+        if frame_counter % skip_frames != 0:
+            logger.info("Skipping frame")
+            continue
+
         ret, frame = cap.read()
         if not ret:
             logger.error("Failed to read frame")
@@ -34,7 +46,7 @@ def read_frames(url: str, frame_queue: mp.Queue, stop_event: mp.Event):
             continue
 
         # Resize frame to 720p to reduce processing load
-        frame = cv2.resize(frame, (1280, 720))
+        frame = cv2.resize(frame, (640, 480))
 
         # If queue is full, remove oldest frame
         if frame_queue.full():
@@ -46,69 +58,118 @@ def read_frames(url: str, frame_queue: mp.Queue, stop_event: mp.Event):
         try:
             frame_queue.put_nowait(frame)
         except:
+            logger.error("Failed to put frame in queue")
             pass
 
     cap.release()
     logger.info("Frame reader stopped")
 
 
+def draw_on_frame(
+    frame: np.ndarray, person: TrackedPerson, global_id: str
+) -> np.ndarray:
+    """Draw bounding box and status for a tracked person"""
+    x, y, w, h = map(int, person.bbox)
+
+    # Use person's unique color for bounding box
+    box_color = person.color
+
+    # Draw bounding box with person's unique color
+    cv2.rectangle(frame, (x, y), (x + w, y + h), box_color, 2)
+
+    # Draw filled rectangle behind text for better visibility
+    text = f"Global: {global_id} ({person.recognition_status})"
+    (text_width, text_height), _ = cv2.getTextSize(
+        text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
+    )
+    cv2.rectangle(
+        frame, (x, y - text_height - 10), (x + text_width + 10, y), box_color, -1
+    )
+
+    # Draw text in white for better contrast
+    cv2.putText(
+        frame,
+        text,
+        (x + 5, y - 7),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (255, 255, 255),  # White text
+        2,
+    )
+
+    # Add status indicator dot
+    status_color = {
+        "pending": (0, 255, 255),  # Yellow
+        "in_progress": (0, 165, 255),  # Orange
+        "recognized": (0, 255, 0),  # Green
+        "unknown": (0, 0, 255),  # Red
+    }.get(person.recognition_status, (255, 255, 255))
+
+    dot_radius = 5
+    dot_position = (x + text_width + 20, y - text_height // 2 - 5)
+    cv2.circle(frame, dot_position, dot_radius, status_color, -1)
+
+    return frame
+
+
 async def handle_face_recognition(
-    nats_client: NatsClient,
+    nats_client,
     company_id: str,
     camera_id: str,
-    person: TrackedPerson,
+    track: "TrackedPerson",
     face_image: np.ndarray,
 ):
-    """Handle the face recognition process through NATS"""
+    """Handle face recognition through AWS Rekognition"""
     try:
-        nats_client = SharedNatsClient.get_instance()
-        # Generate face ID if not exists
-        if not person.face_id:
-            person.face_id = str(uuid.uuid4())
+        # Skip if we don't have a face image
+        if face_image is None:
+            return
 
-        # Get presigned URL for upload
+        # Convert face image to jpg bytes
+        _, img_encoded = cv2.imencode(".jpg", face_image)
+        img_bytes = img_encoded.tobytes()
+
+        # Get presigned URL for unknown face upload
         response = await nats_client.send_message_with_reply(
             Commands.GET_PRESIGNED_UPLOAD_UNKNOWN_FACE_URL.value,
             {
                 "company_id": company_id,
-                "face_id": person.face_id,
+                "face_id": track.face_id,
             },
         )
 
         if not response or not response.get("success"):
-            logger.error("Failed to get presigned URL")
+            logger.error("Failed to get presigned URL for face upload")
             return
 
-        # Upload the image
-        _, img_encoded = cv2.imencode(".jpg", face_image)
-        img_bytes = img_encoded.tobytes()
-
+        # Upload the face image using presigned URL
         async with aiohttp.ClientSession() as session:
             async with session.put(response["url"], data=img_bytes) as resp:
                 if resp.status != 200:
                     logger.error("Failed to upload face image")
                     return
 
-        # Request recognition
-        person.recognition_status = "in_progress"
+        # Execute recognition
+        track.recognition_status = "in_progress"
         recognition_response = await nats_client.send_message_with_reply(
             Commands.EXECUTE_RECOGNITION.value,
             {
                 "company_id": company_id,
                 "camera_id": camera_id,
-                "face_id": person.face_id,
-                "track_id": person.track_id,
+                "face_id": track.face_id,
+                "track_id": track.track_id,
             },
         )
 
-        if not recognition_response or not recognition_response.get("success"):
-            logger.error("Failed to start recognition")
-            person.recognition_status = "pending"
-            return
+        if recognition_response and recognition_response.get("success"):
+            track.face_id = recognition_response.get("face_id")
+            track.recognition_status = recognition_response.get("status")
+        else:
+            track.recognition_status = "unknown"
 
     except Exception as e:
         logger.error(f"Error in face recognition: {e}")
-        person.recognition_status = "pending"
+        track.recognition_status = "pending"
 
 
 def process_frames(
@@ -118,36 +179,43 @@ def process_frames(
     camera_id: str,
     stop_event: mp.Event,
 ):
-    """Process function to run YOLO detection on frames"""
     loop = None
+    thread_pool = None
+
     try:
-        # Import YOLO here inside the process
-        from ultralytics import YOLO
         import torch
+        import cv2
+        from ultralytics import YOLO
+        from reid_implementation import SharedCrossCameraTracker
 
-        # Check available devices
+        # Get the shared cross-camera tracker instance
+        cross_camera_tracker = SharedCrossCameraTracker.get_instance()
+
+        # Check for hardware acceleration
         if torch.cuda.is_available():
-            device = "cuda"
-            device_name = torch.cuda.get_device_name(0)
-            logger.info(f"Using GPU: {device_name}")
-        elif torch.backends.mps.is_available():
-            device = "mps"
-            logger.info("Using Apple M1/M2 GPU")
+            device = torch.device("cuda")
+            logger.info(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device("mps")
+            logger.info("Using Apple M1 MPS acceleration")
         else:
-            device = "cpu"
-            logger.info("No GPU available, using CPU")
+            device = torch.device("cpu")
+            logger.warning("No GPU acceleration available. Running on CPU")
 
-        # Load model and move to device
+        # Initialize model
         model = YOLO("yolov8n.pt")
         model.to(device)
 
-        # Add some debug info about model device
-        logger.info(f"Model is on device: {next(model.parameters()).device}")
+        # Create thread pool
+        thread_pool = ThreadPoolExecutor(max_workers=4)
 
+        # Initialize tracker
         person_tracker = PersonTracker()
 
+        # Initialize NATS client
         nats_client = SharedNatsClient.get_instance()
 
+        # Create event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
@@ -157,78 +225,122 @@ def process_frames(
             except:
                 continue
 
-            # Run YOLO detection with explicit device
-            results = model(
-                frame,
-                device=device,
+            # Run YOLO detection with tracking
+            results = model.track(
+                source=frame,
+                conf=0.5,
+                iou=0.7,
+                persist=True,
+                tracker="bytetrack.yaml",
                 verbose=False,
+                device=device,
             )
 
-            boxes = []
-            scores = []
-            for result in results:
-                for box in result.boxes:
-                    if box.cls.cpu().numpy()[0] == 0:  # Person class
-                        boxes.append(box.xyxy[0].cpu().numpy())  # [x1, y1, x2, y2]
-                        scores.append(
-                            float(box.conf.cpu().numpy()[0])
-                        )  # confidence score
-
-            if boxes:  # Only update if we have detections
-                boxes = np.array(boxes)
-                scores = np.array(scores)
-
-                # Update tracker
+            if results and len(results) > 0:
+                # Update tracker with results
                 current_time = time.time()
                 updated_tracks, new_tracks = person_tracker.update(
-                    frame, boxes, scores, current_time
+                    frame, results, current_time
                 )
 
-                # Handle face recognition for new and updated tracks
-                for track in new_tracks + updated_tracks:
-                    if track.recognition_status == "pending":
-                        loop.create_task(
-                            handle_face_recognition(
-                                nats_client,
-                                company_id,
-                                camera_id,
-                                track,
-                                track.face_image,
+                # Prepare data for cross-camera tracking
+                person_crops = []
+                face_ids = {}
+                recognition_statuses = {}
+
+                # Process all tracks
+                for track in updated_tracks + new_tracks:
+                    # Generate face ID if not exists
+                    if not track.face_id:
+                        track.face_id = str(uuid.uuid4())
+
+                    # Get person crop
+                    x, y, w, h = map(int, track.bbox)
+                    person_crop = frame[y : y + h, x : x + w]
+                    person_crops.append((track.track_id, person_crop))
+
+                    if track.face_id:
+                        face_ids[track.track_id] = track.face_id
+                    if track.recognition_status:
+                        recognition_statuses[track.track_id] = track.recognition_status
+
+                positions = {
+                    track.track_id: (
+                        track.bbox[0] + track.bbox[2] / 2,  # center x
+                        track.bbox[1] + track.bbox[3] / 2,  # center y
+                    )
+                    for track in (new_tracks + updated_tracks)
+                }
+
+                # Update cross-camera tracking
+                global_ids = cross_camera_tracker.update(
+                    camera_id=camera_id,
+                    person_crops=person_crops,
+                    positions=positions,  # Add this
+                    face_ids=face_ids,
+                    recognition_statuses=recognition_statuses,
+                )
+
+                # Process face recognition
+                face_tasks = []
+                for track in new_tracks + [
+                    t for t in updated_tracks if t.recognition_status == "pending"
+                ]:
+                    if track.face_image is not None:
+                        # Get global ID
+                        global_id = global_ids.get(track.track_id)
+
+                        # Check if already recognized in another camera
+                        if global_id:
+                            person_info = cross_camera_tracker.get_person_info(
+                                global_id
                             )
-                        )
+                            if (
+                                person_info
+                                and person_info.recognition_status != "pending"
+                            ):
+                                track.face_id = person_info.face_id
+                                track.recognition_status = (
+                                    person_info.recognition_status
+                                )
+                                continue
 
-            # Draw results on frame
-            for person in person_tracker.tracked_persons.values():
-                bbox = person.bbox
-                # Draw bounding box
-                cv2.rectangle(
-                    frame,
-                    (int(bbox[0]), int(bbox[1])),
-                    (int(bbox[2]), int(bbox[3])),
-                    (0, 255, 0),
-                    2,
-                )
+                        # If not recognized, send for recognition
+                        if nats_client and nats_client._connected:
+                            face_task = loop.create_task(
+                                handle_face_recognition(
+                                    nats_client,
+                                    company_id,
+                                    camera_id,
+                                    track,
+                                    track.face_image,
+                                )
+                            )
+                            face_tasks.append(face_task)
 
-                # Draw ID and status
-                status_color = {
-                    "pending": (0, 255, 255),  # Yellow
-                    "in_progress": (0, 165, 255),  # Orange
-                    "recognized": (0, 255, 0),  # Green
-                    "unknown": (0, 0, 255),  # Red
-                }.get(person.recognition_status, (255, 255, 255))
+                # Draw results
+                draw_frame = frame.copy()
+                futures = []
+                for person in person_tracker.tracked_persons.values():
+                    global_id = global_ids.get(person.track_id, "unknown")
+                    future = thread_pool.submit(
+                        draw_on_frame, draw_frame, person, global_id
+                    )
+                    futures.append(future)
 
-                cv2.putText(
-                    frame,
-                    f"ID: {person.track_id} ({person.recognition_status})",
-                    (int(bbox[0]), int(bbox[1] - 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    status_color,
-                    2,
-                )
+                # Wait for drawing
+                for future in futures:
+                    try:
+                        future.result(timeout=0.1)
+                    except TimeoutError:
+                        logger.warning("Drawing operation timed out")
+                        continue
 
-            # Convert to bytes for WebSocket transmission
-            _, buffer = cv2.imencode(".jpg", frame)
+            else:
+                draw_frame = frame
+
+            # Convert to bytes for WebSocket
+            _, buffer = cv2.imencode(".jpg", draw_frame)
             frame_bytes = buffer.tobytes()
 
             if output_queue.full():
@@ -241,14 +353,16 @@ def process_frames(
             except:
                 pass
 
-            # Process any pending tasks
+            # Process pending tasks
             loop.run_until_complete(asyncio.sleep(0))
 
     except Exception as e:
-        logger.error(f"Error in frame processor: {e}")
+        logger.error(f"Error in frame processor: {e}", exc_info=True)
     finally:
         if loop:
             loop.close()
+        if thread_pool:
+            thread_pool.shutdown(wait=False)
         logger.info("Frame processor stopped")
 
 

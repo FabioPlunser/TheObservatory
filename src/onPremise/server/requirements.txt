@@ -14,4 +14,7 @@ zeroconf
 numpy
 psutil
 aiofiles
-bytetracker
+aiohttp
+greenlet
+websockets
+lap

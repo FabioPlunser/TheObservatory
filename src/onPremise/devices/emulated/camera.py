@@ -27,11 +27,12 @@ class Camera:
         self.cap = None
         self.is_running = False
         self.discovery = EdgeServerDiscovery()
+
+        # Default to a commonly supported configuration
         self.frame_rate = 30
-        self.frame_interval = 1.0
-        self.frame_width = 1280
-        self.frame_height = 720
-        self.os_type = platform.system().lower()  # 'darwin', 'linux', or 'windows'
+        self.frame_width = 640
+        self.frame_height = 480
+        self.os_type = platform.system().lower()
         self.gpu_vendor = self._detect_gpu()
 
         logger.info(f"Detected operating system: {self.os_type}")
@@ -49,15 +50,14 @@ class Camera:
                     text=True,
                 )
                 return "apple_silicon" if "Apple" in result.stdout else None
-            elif self.os_type == "linux":
+            elif self.os_type in ["linux", "windows"]:
                 import subprocess
 
-                result = subprocess.run(["nvidia-smi"], capture_output=True)
-                return "nvidia" if result.returncode == 0 else None
-            elif self.os_type == "windows":
-                import subprocess
-
-                result = subprocess.run(["nvidia-smi"], capture_output=True, shell=True)
+                result = subprocess.run(
+                    ["nvidia-smi"],
+                    capture_output=True,
+                    shell=(self.os_type == "windows"),
+                )
                 return "nvidia" if result.returncode == 0 else None
         except Exception as e:
             logger.warning(f"GPU detection failed: {e}")
@@ -67,73 +67,26 @@ class Camera:
         """Discover edge server"""
         logger.info("Starting edge server discovery")
         self.edge_server_url = await self.discovery.discover_edge_server()
-
         if not self.edge_server_url:
             logger.error("Failed to discover edge server")
             return False
         logger.info(f"Successfully discovered edge server at {self.edge_server_url}")
         return True
 
-    async def register_with_edge(self):
-        """Register camera with edge server"""
-        if not self.edge_server_url:
-            logger.error("No edge server URL available")
-            return False
-
-        from urllib.parse import urlparse
-
-        parsed_url = urlparse(self.edge_server_url)
-        server_ipd = parsed_url.hostname
-        rtsp_port = 8554
-
-        self.rtsp_url = f"rtsp://{server_ipd}:{rtsp_port}/{self.camera_id}"
-        logger.info(f"RTSP URL: {self.rtsp_url}")
-        try:
-            registration_data = {
-                "camera_id": self.camera_id,
-                "name": f"Camera {self.camera_id[:8]}",
-                "rtsp_url": self.rtsp_url,
-                "capabilities": {
-                    "resolution": f"{self.frame_width}x{self.frame_height}",
-                    "fps": self.frame_rate,
-                    "night_vision": False,
-                },
-            }
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.edge_server_url}/register/camera",
-                    json=registration_data,
-                    timeout=5,
-                ) as response:
-                    if response.status == 200:
-                        await response.json()
-                        logger.info(f"Camera {self.camera_id} registered successfully")
-                        return True
-                    else:
-                        logger.error(
-                            f"Registration failed with status {response.status}"
-                        )
-                        return False
-
-        except Exception as e:
-            logger.error(f"Registration failed: {e}")
-            return False
-
     def get_ffmpeg_input_args(self):
-        """Get optimized platform-specific FFmpeg input arguments"""
+        """Get optimized FFmpeg input arguments for webcam"""
         base_args = [
             "-fflags",
-            "nobuffer",  # Disable input buffering
+            "nobuffer",
             "-flags",
-            "low_delay",  # Enable low delay flags
+            "low_delay",
             "-framerate",
             str(self.frame_rate),
             "-video_size",
             f"{self.frame_width}x{self.frame_height}",
         ]
 
-        if self.os_type == "darwin":  # macOS
+        if self.os_type == "darwin":
             return base_args + [
                 "-f",
                 "avfoundation",
@@ -151,9 +104,9 @@ class Camera:
                 "-f",
                 "v4l2",
                 "-input_format",
-                "mjpeg",  # Use MJPEG if camera supports it
+                "mjpeg",
                 "-ts",
-                "monotonic",  # Use monotonic timestamps
+                "monotonic",
                 "-i",
                 "/dev/video0",
             ]
@@ -162,7 +115,7 @@ class Camera:
                 "-f",
                 "dshow",
                 "-rtbufsize",
-                "100M",  # Increase buffer size
+                "100M",
                 "-i",
                 "video=Integrated Webcam",
             ]
@@ -209,10 +162,8 @@ class Camera:
                 "1",
             ]
         else:
-            # Fallback to CPU encoding with optimized settings
             encoder_args = ["-c:v", "libx264", "-threads", "4"]
 
-        # Common output settings
         output_args = [
             "-pix_fmt",
             "yuv420p",
@@ -227,19 +178,13 @@ class Camera:
         return encoder_args + quality_args + output_args + [rtsp_url]
 
     async def start_streaming(self, stop_event=None):
-        """Start optimized camera streaming"""
+        """Start webcam streaming"""
         if not self.edge_server_url:
             logger.error("No edge server URL available")
             return
 
         try:
-            logger.info(f"Starting optimized stream on {self.os_type}")
-
-            # Set process priority
-            if self.os_type == "linux":
-                import os
-
-                os.nice(-10)  # Higher priority for the streaming process
+            logger.info(f"Starting webcam stream on {self.os_type}")
 
             ffmpeg_command = [
                 "ffmpeg",
@@ -253,7 +198,7 @@ class Camera:
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            logger.info(f"FFmpeg process started for camera {self.camera_id}")
+            logger.info(f"FFmpeg process started for webcam {self.camera_id}")
 
             async def log_output(stream, level):
                 while True:
@@ -263,26 +208,25 @@ class Camera:
                     decoded_line = line.decode("utf-8").strip()
                     logger.log(level, decoded_line)
 
-                    # Check for common FFmpeg errors
+                    # Check for common webcam errors
                     if "Permission denied" in decoded_line:
                         if self.os_type == "darwin":
                             logger.error(
-                                "Camera access permission denied. Please check System Preferences -> Security & Privacy -> Camera"
+                                "Webcam access permission denied. Please check System Preferences -> Security & Privacy -> Camera"
                             )
                         elif self.os_type == "linux":
                             logger.error(
-                                "Camera access permission denied. Check user permissions for /dev/video0"
+                                "Webcam access permission denied. Check user permissions for /dev/video0"
                             )
                         else:
-                            logger.error("Camera access permission denied")
+                            logger.error("Webcam access permission denied")
                         process.terminate()
                     elif "Invalid data found" in decoded_line:
                         logger.error(
-                            "Error accessing camera. Please ensure no other applications are using it"
+                            "Error accessing webcam. Please ensure no other applications are using it"
                         )
                         process.terminate()
 
-            # Monitor both stdout and stderr
             stdout_task = asyncio.create_task(log_output(process.stdout, logging.INFO))
             stderr_task = asyncio.create_task(log_output(process.stderr, logging.ERROR))
 
@@ -317,57 +261,54 @@ class Camera:
             raise
         finally:
             self.is_running = False
-            logger.info(f"WebSocket connection closed for camera {self.camera_id}")
+            logger.info(f"Webcam streaming stopped for camera {self.camera_id}")
 
-    async def stream_frames(
-        self, stop_event, websocket, frame_skip, effective_frame_rate, video_source=0
-    ):
-        while self.is_running and (stop_event is None or not stop_event.is_set()):
-            try:
-                for _ in range(frame_skip):
-                    self.cap.grab()
+    async def register_with_edge(self):
+        """Register camera with edge server"""
+        if not self.edge_server_url:
+            logger.error("No edge server URL available")
+            return False
 
-                ret, frame = self.cap.read()
-                if not ret:
-                    logger.error("Failed to capture frame. Reinitializing camera...")
-                    self.cap.release()
-                    self.cap = cv2.VideoCapture(video_source)  # Reinitialize camera
-                    if not self.cap.isOpened():
-                        logger.error("Camera could not be reopened")
-                        break
-                    continue
+        from urllib.parse import urlparse
 
-                # Resize frame to reduce data size
-                frame = cv2.resize(
-                    frame, (self.frame_width // 2, self.frame_height // 2)
-                )
-                # Reduce quality to 50%
-                _, buffer = cv2.imencode(
-                    ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50]
-                )
+        parsed_url = urlparse(self.edge_server_url)
+        server_ip = parsed_url.hostname
+        rtsp_port = 8554
 
-                frame_data = base64.b64encode(buffer).decode("utf-8")
+        self.rtsp_url = f"rtsp://{server_ip}:{rtsp_port}/{self.camera_id}"
+        logger.info(f"RTSP URL: {self.rtsp_url}")
 
-                try:
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "camera_id": self.camera_id,
-                                "timestamp": datetime.now().isoformat(),
-                                "frame": frame_data,
-                            }
+        try:
+            registration_data = {
+                "camera_id": self.camera_id,
+                "name": f"Webcam {self.camera_id[:8]}",
+                "rtsp_url": self.rtsp_url,
+                "capabilities": {
+                    "resolution": f"{self.frame_width}x{self.frame_height}",
+                    "fps": self.frame_rate,
+                    "night_vision": False,
+                },
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.edge_server_url}/register/camera",
+                    json=registration_data,
+                    timeout=5,
+                ) as response:
+                    if response.status == 200:
+                        await response.json()
+                        logger.info(f"Webcam {self.camera_id} registered successfully")
+                        return True
+                    else:
+                        logger.error(
+                            f"Registration failed with status {response.status}"
                         )
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send frame: {e}")
-                    continue  # Skip this frame and try the next one
+                        return False
 
-                await asyncio.sleep(1 / effective_frame_rate)
-            except Exception as e:
-                logger.error(f"Streaming error: {e}")
-                break
-
-            await asyncio.sleep(1 / effective_frame_rate)
+        except Exception as e:
+            logger.error(f"Registration failed: {e}")
+            return False
 
     async def stop(self):
         """Stop the camera"""
@@ -376,21 +317,8 @@ class Camera:
             self.cap.release()
             self.cap = None
 
-    def get_available_camera(self):
-        index = 0
-        available_cameras = []
-        while True:
-            cap = cv2.VideoCapture(index)
-            if not cap.read()[0]:
-                break
-            available_cameras.append(index)
-            cap.release()
-            index += 1
-        return available_cameras[0]
-
 
 async def main():
-
     camera = Camera()
     try:
         if not await camera.discover_edge_server():
@@ -400,7 +328,7 @@ async def main():
         if await camera.register_with_edge():
             await camera.start_streaming()
     except KeyboardInterrupt:
-        logger.info("Shutting down camera...")
+        logger.info("Shutting down webcam...")
     except Exception as e:
         logger.error(f"Camera error: {e}")
     finally:
