@@ -128,8 +128,8 @@ The system requires significant parallel processing capabilities to handle multi
       \item \textbf{YOLO:} For face detection and person detection we use YOLOv8n, the most lightweight model of the YOLOv8 family. 
             The model runs on the edge server and processes each camera feed in real-time. We utilize hardware acceleration where available,
             supporting CUDA for NVIDIA GPUs and MPS for Apple Silicon, with CPU fallback.
-      \item \textbf{Tracking:} We implement multi-camera person tracking using torchreid for real-time person tracking and a custom
-            cross-camera tracking system. This allows us to maintain person identity across multiple camera views and avoid redundant face recognition requests. 
+      \item \textbf{Tracking:} We implement multi-camera person tracking using ByteTrack for real-time person tracking and using torchreid for the person re-identification task. 
+            This allows us to maintain person identity across multiple camera views and avoid redundant face recognition requests. 
             Each tracked person maintains their recognition status (pending, in\_progress, recognized, unknown) and face ID across the system.
 \end{itemize}
 
