@@ -99,7 +99,7 @@ A high level of parallelism is needed to process the images sent from at least 5
 \end{itemize}
 \subsection{Data Storage}
 \begin{itemize}
-      \item \textbf{AWS S3:} ...
+      \item \textbf{AWS S3:} Our storage solution utilizes a single S3 bucket named 'the-observatory-faces' that implements a company-centric organizational structure for comprehensive face management. The bucket's root level contains individual folders for each company using our system. Within each company folder, we maintain two distinct directories: 'known-faces' and 'unknown-faces'. The 'known-faces' directory stores pre-approved facial records of employees and authorized personnel, while 'unknown-faces' automatically accumulates detected faces that don't match any known records.
       \item \textbf{Database:} ...
 \end{itemize}
 \subsection{Data Analysis}
