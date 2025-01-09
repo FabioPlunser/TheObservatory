@@ -43,10 +43,6 @@ cleanup() {
         # Kill the entire process group
         kill -- -$simulated_camera_pid 2>/dev/null || true
     fi
-    # Kill cloud process
-    if [ "$launch_cloud" = true ]; then
-        kill $cloud_pid 2>/dev/null || true
-    fi
     # Kill server
     kill $server_pid 2>/dev/null || true
     
@@ -62,13 +58,6 @@ echo "🚀 Starting setup script..."
 # Prompt the user to launch or destroy the Terraform server
 read -p "Do you want to launch, destroy, or do nothing with the Terraform server? ([l]aunch/[d]estroy/[n]othing): " action
 if [ "$action" = "l" ]; then
-    # Get user input for launching the Cloud script
-    read -p "Do you want to launch the Cloud script? (y/n): " launch_cloud
-    if [ "$launch_cloud" = "y" ]; then
-        launch_cloud=true
-    else
-        launch_cloud=false
-    fi
 
     # Check if AWS credentials file exists
     aws_credentials_path="$HOME/.aws/credentials"
@@ -121,23 +110,6 @@ if [ "$action" = "l" ]; then
     echo "🚀 Applying Terraform configuration..."
     terraform apply -var "private_pem_key=$key_pair_path" -auto-approve
 
-    # Get the IP address of the EC2 instance
-    nats_instance_ip=$(terraform output -raw nats_instance_public_ip)
-    nats_instance_ip=$(echo $nats_instance_ip | xargs) # Trim whitespace
-    
-    popd
-
-    # Start Cloud server
-    if [ "$launch_cloud" = true ]; then
-        echo "🌐 Starting Cloud script..."
-        
-        # Create the full NATS URL
-        natsUrl="nats://$nats_instance_ip:4222"
-
-        # Start the Python process with arguments
-        python cloud/cloud.py $natsUrl &
-        cloud_pid=$!
-    fi
 
 elif [ "$action" = "d" ]; then
     echo "🛑 Destroying Terraform-managed infrastructure..."
