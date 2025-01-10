@@ -45,3 +45,6 @@ venvWin
 
 .DS_Store
 requirements_checksum.txt
+terraform_nats.tfstate
+terraform_nats.tfstate.backup
+

@@ -93,17 +93,42 @@ if ($action -eq "l") {
 
     # Check if the key pair exists
     $key_pair_name = "theObservatory"
-    $key_pair_exists = aws ec2 describe-key-pairs --key-names $key_pair_name 2>&1 | Select-String -Pattern $key_pair_name
+    $key_pair_path = "$env:USERPROFILE\.ssh\theObservatory.pem"
+    $ssh_dir = "$env:USERPROFILE\.ssh"
 
-    if (-Not $key_pair_exists) {
-        Write-Host "Key pair '$key_pair_name' not found. Creating key pair..."
-        $key_pair_path = "$env:USERPROFILE\.ssh\theObservatory.pem"
-        aws ec2 create-key-pair --key-name $key_pair_name --query "KeyMaterial" --output text | Out-File -FilePath $key_pair_path -Encoding ascii
-        Write-Host "Key pair created and saved to $key_pair_path"
-    } else {
-        Write-Host "Key pair '$key_pair_name' found."
-        $key_pair_path = "$env:USERPROFILE\.ssh\theObservatory.pem"
+    if (-Not (Test-Path -Path $ssh_dir)) {
+        Write-Host "Creating .ssh directory..."
+        New-Item -ItemType Directory -Path $ssh_dir
     }
+
+    if (-Not (Test-Path -Path $key_pair_path)) {
+        Write-Host "Key pair file '$key_pair_path' not found. Checking if key pair exists in AWS..."
+        if (aws ec2 describe-key-pairs --key-names $key_pair_name 2>&1 | Select-String -Pattern $key_pair_name) {
+            Write-Host "Key pair '$key_pair_name' exists in AWS but the local file is missing."
+            $create_new_key = Read-Host "The key pair exists in AWS but the local file is missing. Do you want to create a new key pair? (y/n)"
+            if ($create_new_key -eq "y") {
+                Write-Host "Deleting existing key pair in AWS and creating a new one..."
+                aws ec2 delete-key-pair --key-name $key_pair_name
+                aws ec2 create-key-pair --key-name $key_pair_name --query "KeyMaterial" --output text | Out-File -FilePath $key_pair_path -Encoding ascii
+                icacls $key_pair_path /inheritance:r /grant:r ${env:USERNAME}:R # Windows equivalent of chmod 400
+                Write-Host "New key pair created and saved to $key_pair_path"
+            } else {
+                Write-Host "Please ensure you have the correct key pair file at '$key_pair_path'."
+                exit 1
+            }
+        } else {
+            Write-Host "Key pair '$key_pair_name' not found in AWS. Creating key pair..."
+            aws ec2 create-key-pair --key-name $key_pair_name --query "KeyMaterial" --output text | Out-File -FilePath $key_pair_path -Encoding ascii
+            icacls $key_pair_path /inheritance:r /grant:r ${env:USERNAME}:R # Windows equivalent of chmod 400
+            Write-Host "Key pair created and saved to $key_pair_path"
+        }
+    } else {
+        Write-Host "Key pair file '$key_pair_path' found."
+        icacls $key_pair_path /inheritance:r /grant:r ${env:USERNAME}:R # Ensure correct permissions
+    }
+
+    # Verify the key file permissions
+    icacls $key_pair_path
 
     Write-Host "🌍 Initializing Terraform..."
     Push-Location "terraform"
@@ -111,6 +136,7 @@ if ($action -eq "l") {
 
     Write-Host "🚀 Applying Terraform configuration..."
     terraform apply -var "private_pem_key=$key_pair_path" -auto-approve
+    Pop-Location
 
 } elseif ($action -eq "d") {
     Write-Host "🛑 Destroying Terraform-managed infrastructure..."
@@ -200,7 +226,7 @@ if (command_exists bun) {
 
 # Start the server in the background
 Write-Host "🖥️ Starting edge server..."
-$server_process = Start-Process -FilePath "python" -ArgumentList "onPremise/server/edge_server.py" -PassThru
+$server_process = Start-Process -FilePath "python" -ArgumentList "onPremise/server/main.py" -PassThru
 $global:server_pid = $server_process.Id
 
 # Wait for server to start

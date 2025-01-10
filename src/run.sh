@@ -92,16 +92,35 @@ if [ "$action" = "l" ]; then
 
     # Check if the key pair exists
     key_pair_name="theObservatory"
-    if ! aws ec2 describe-key-pairs --key-names $key_pair_name 2>&1 | grep -q $key_pair_name; then
-        echo "Key pair '$key_pair_name' not found. Creating key pair..."
-        key_pair_path="$HOME/.ssh/theObservatory.pem"
-        aws ec2 create-key-pair --key-name $key_pair_name --query "KeyMaterial" --output text > $key_pair_path
-        chmod 400 $key_pair_path
-        echo "Key pair created and saved to $key_pair_path"
+    key_pair_path="$HOME/.ssh/theObservatory.pem"
+    if [ ! -f "$key_pair_path" ]; then
+        echo "Key pair file '$key_pair_path' not found. Checking if key pair exists in AWS..."
+        if aws ec2 describe-key-pairs --key-names $key_pair_name 2>&1 | grep -q $key_pair_name; then
+            echo "Key pair '$key_pair_name' exists in AWS but the local file is missing."
+            read -p "The key pair exists in AWS but the local file is missing. Do you want to create a new key pair? (y/n): " create_new_key
+            if [ "$create_new_key" = "y" ]; then
+                echo "Deleting existing key pair in AWS and creating a new one..."
+                aws ec2 delete-key-pair --key-name $key_pair_name
+                aws ec2 create-key-pair --key-name $key_pair_name --query "KeyMaterial" --output text > $key_pair_path
+                chmod 400 $key_pair_path
+                echo "New key pair created and saved to $key_pair_path"
+            else
+                echo "Please ensure you have the correct key pair file at '$key_pair_path'."
+                exit 1
+            fi
+        else
+            echo "Key pair '$key_pair_name' not found in AWS. Creating key pair..."
+            aws ec2 create-key-pair --key-name $key_pair_name --query "KeyMaterial" --output text > $key_pair_path
+            chmod 400 $key_pair_path
+            echo "Key pair created and saved to $key_pair_path"
+        fi
     else
-        echo "Key pair '$key_pair_name' found."
-        key_pair_path="$HOME/.ssh/theObservatory.pem"
+        echo "Key pair file '$key_pair_path' found."
+        chmod 400 $key_pair_path  # Ensure correct permissions
     fi
+
+    # Verify the key file permissions
+    ls -l $key_pair_path
 
     echo "🌍 Initializing Terraform..."
     pushd terraform
@@ -132,7 +151,7 @@ fi
 # Create and activate Python virtual environment
 if [ ! -d "venv" ]; then
     echo "🐍 Creating Python virtual environment..."
-    python3 -m venv venv >/dev/null 2>&1
+    python3.12 -m venv venv >/dev/null 2>&1
 fi
 
 # Activate virtual environment
@@ -200,7 +219,7 @@ fi
 
 # Start the server in the background
 echo "🖥️ Starting edge server..."
-python onPremise/server/edge_server.py &
+python onPremise/server/main.py &
 server_pid=$!
 
 # Wait for server to start

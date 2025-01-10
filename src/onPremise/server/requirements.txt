@@ -18,3 +18,7 @@ aiohttp
 greenlet
 websockets
 lap
+torchreid
+gdown
+tensorboard
+netifaces

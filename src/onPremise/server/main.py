@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
 from edge_server import EdgeServer
 from database import Database
 from routes import Router
@@ -11,9 +10,9 @@ from logging_config import setup_logger
 
 import os
 import logging
-import asyncio
 import signal
-import psutil  # Make sure to pip install psutil
+import psutil  
+import uvicorn
 
 setup_logger()
 logger = logging.getLogger("Main")
@@ -113,7 +112,5 @@ def create_app():
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     app = create_app()
     uvicorn.run(app, host="0.0.0.0", port=PORT)
