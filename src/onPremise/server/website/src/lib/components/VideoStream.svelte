@@ -17,9 +17,12 @@
 
     ws.onmessage = function (event) {
       const blob = new Blob([event.data], { type: "image/jpeg" });
+      console.log(blob);
       const url = URL.createObjectURL(blob);
+      imgElement.onload = () => {
+        URL.revokeObjectURL(url); // Revoke only after the image has loaded
+      };
       imgElement.src = url;
-      URL.revokeObjectURL(url); // Clean up
     };
 
     ws.onopen = () => {

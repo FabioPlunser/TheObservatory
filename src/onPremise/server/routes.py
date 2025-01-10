@@ -22,6 +22,9 @@ import uuid
 import json
 import os
 import ipaddress
+import zlib
+import time
+
 
 setup_logger()
 logger = logging.getLogger("Router")
@@ -142,6 +145,7 @@ class Router:
 
             try:
                 await websocket.accept()
+
                 while True:
                     try:
                         # Check for client messages (non-blocking)
@@ -155,15 +159,18 @@ class Router:
                             pass
 
                         # Get and send frame
-                        frame_bytes = await self.edge_server.get_frame(camera_id)
-                        if frame_bytes is not None:
-                            await websocket.send_bytes(frame_bytes)
+                        # if not self.edge_server.cameras[camera_id]:
+                        #     break
+
+                        frame = await self.edge_server.get_frame(camera_id)
+                        if frame is not None:
+                            await websocket.send_bytes(frame)
+
                         self.edge_server.cameras[camera_id][
                             "last_seen"
                         ] = datetime.now()
 
-                        # Control frame rate (approximately 30 FPS)
-                        await asyncio.sleep(0.033)
+                        # await asyncio.sleep(0.033)
 
                     except WebSocketDisconnect:
                         break

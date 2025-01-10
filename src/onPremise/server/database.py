@@ -62,9 +62,9 @@ class Camera(Base):
 class Alarm(Base):
     __tablename__ = "alarm"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    camera_id = Column(String, ForeignKey("cameras.id"))
-    room_id = Column(Integer, ForeignKey("rooms.id"))
+    id = Column(String, primary_key=True)
+    camera_id = Column(String, ForeignKey("cameras.id"), nullable=True)
+    room_id = Column(String, ForeignKey("rooms.id"), nullable=True)
     last_seen = Column(DateTime)
     status = Column(String)
     active = Column(Boolean)
@@ -91,7 +91,7 @@ class FaceDetection(Base):
     __tablename__ = "face_detections"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    camera_id = Column(String, ForeignKey("cameras.id"))
+    camera_id = Column(String, ForeignKey("cameras.id"), nullable=True)
     known_face_id = Column(Integer, ForeignKey("known_faces.id"), nullable=True)
     detection_time = Column(DateTime, default=datetime.now)
     confidence = Column(Float)

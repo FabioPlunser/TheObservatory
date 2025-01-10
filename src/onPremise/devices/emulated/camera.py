@@ -273,7 +273,7 @@ class Camera:
 
         parsed_url = urlparse(self.edge_server_url)
         server_ip = parsed_url.hostname
-        rtsp_port = 8554
+        rtsp_port = 8555
 
         self.rtsp_url = f"rtsp://{server_ip}:{rtsp_port}/{self.camera_id}"
         logger.info(f"RTSP URL: {self.rtsp_url}")

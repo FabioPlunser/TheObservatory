@@ -72,7 +72,6 @@ class EdgeServer:
                     Commands.INIT_BUCKET.value, {"company_id": company_id}
                 )
 
-                await self._setup_alert_subscription()
 
                 if response and response.get("success"):
                     logger.info("Successfully initialized bucket")
@@ -89,6 +88,7 @@ class EdgeServer:
             await asyncio.sleep(retry_delay)
 
         self._bucket_init_task = None
+        await self._setup_alert_subscription()
         logger.info("Bucket initialization task completed")
 
     async def stop_bucket_init(self):
@@ -339,6 +339,7 @@ class EdgeServer:
 
     async def _setup_alert_subscription(self):
         """Setup subscription for face recognition alerts"""
+        logger.info("Setting up alert subscription")
         nats_client = SharedNatsClient.get_instance()
         try:
             company_id = await self.db.get_company_id()
@@ -347,6 +348,7 @@ class EdgeServer:
                 await nats_client.add_subscription(
                     f"{Commands.ALARM.value}.{company_id}", self._handle_alert
                 )
+                logger.info("Alert subscription setup successfully")
         except Exception as e:
             logger.error(f"Error setting up alert subscription: {e}")
 
@@ -354,6 +356,7 @@ class EdgeServer:
         """Handle incoming face regonition alerts"""
         nats_client = SharedNatsClient.get_instance()
         try:
+            logger.info(f"Received alert: {msg.subject}")
             data = json.loads(msg.data.decode())
             alert_type = data.get("type")
             camera_id = data.get("camera_id")
@@ -380,7 +383,7 @@ class EdgeServer:
 
             logger.info(f"Received alert for camera {camera_id}: {alert_type}")
 
-            alarms = self.db.get_all_alarms()
+            alarms = await self.db.get_all_alarms()
             for alarm in alarms:
                 alarm_ws = self.alarms[alarm["id"]].get("websocket")
                 if alarm_ws:

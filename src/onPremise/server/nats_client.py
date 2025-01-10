@@ -114,7 +114,7 @@ class SharedNatsClient:
         if not cls._instance:
             logger.warning(
                 "NATS client not initialized"
-            )  # Changed from error to warning
+            )
         return cls._instance
 
     @classmethod

@@ -116,6 +116,7 @@ class Server:
     async def handle_presigned_upload_unkonwn_faces_request(self, msg):
         """Handle request for presigned URL for unknown face upload"""
         try:
+            logger.info("Handling presigned upload unknown face request")
             data = json.loads(msg.data.decode())
             company_id = data.get("company_id")
             face_id = data.get("face_id")
@@ -210,7 +211,9 @@ class Server:
                 raise Exception("Missing required fields")
 
             # Get list of known faces
-            known_faces = await self.bucket_handler.get_list_of_objects("known_face")
+            known_faces = self.bucket_handler.get_list_of_objects(
+                company_id, "known_faces"
+            )
 
             unknown_face_key = f"{company_id}/unknown_faces/{face_id}.jpg"
 
@@ -218,6 +221,7 @@ class Server:
 
             for known_face in known_faces:
                 try:
+                    logger.info(f"Comparing faces: {known_face} vs {unknown_face_key}")
                     response = self.rekognition_client.compare_faces(
                         SourceImage={
                             "S3Object": {
@@ -248,6 +252,7 @@ class Server:
 
             if not matches:
                 # No matches found - send alert
+                logger.error("Unknown face detected")
                 await self.nats_client.send_message(
                     f"{Commands.ALARM.value}.{company_id}",
                     json.dumps(
@@ -264,7 +269,7 @@ class Server:
             await msg.respond(
                 json.dumps({"success": True, "matches": matches}).encode()
             )
-
+            logger.info("Recognition request completed")
         except Exception as e:
             logger.error(f"Failed to handle recognition request: {e}")
             await msg.respond(json.dumps({"success": False, "error": str(e)}).encode())

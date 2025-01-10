@@ -48,19 +48,22 @@
     {#if cameras.length > 0}
       {#each cameras as camera (camera.id)}
         <div class="rounded-lg p-4 bg-base-200 shadow-lg">
-          <div class="mb-2 flex justify-between items-center">
-            <div>
+          <div class="mb-2 flex justify-between items-center relative">
+            <div class="text-white font-bold">
+              <Icon icon="material-symbols:live-tv" width="24" height="24" />
               <h1 class="text-lg font-bold">
-                {camera.name}
+                Name: {camera.name}
               </h1>
-              <p>Id: {camera.id}</p>
+              <h1>ID: {camera.id}</h1>
             </div>
             <button
+              class="absolute top-0 right-0 p-2"
               onclick={async () => {
                 await deleteCamera(camera);
                 loadData();
               }}
               ><Icon
+                class="text-red-500"
                 icon="material-symbols:delete"
                 width="24"
                 height="24"
@@ -72,7 +75,7 @@
             <VideoStream cameraId={camera.id} />
           </div>
 
-          <div class="mt-2 text-sm">
+          <div class="mt-2 text-sm text-white font-bold">
             <p>
               Room: {rooms.find((r) => r.id === camera.room_id)?.name ||
                 "Unassigned"}
