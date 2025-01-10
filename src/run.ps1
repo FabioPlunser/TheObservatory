@@ -38,10 +38,6 @@ function cleanup {
     if ($use_simulated_data) {
         Stop-Process -Id $simulated_camera_pid -ErrorAction SilentlyContinue
     }
-    # Kill cloud process
-    if ($lauche_cloud) {
-        Stop-Process -Id $cloud_pid -ErrorAction SilentlyContinue
-    }
     # Kill server
     Stop-Process -Id $server_pid -ErrorAction SilentlyContinue
     
@@ -58,9 +54,6 @@ Write-Host "🚀 Starting setup script..."
 # Prompt the user to launch or destroy the Terraform server
 $action = Read-Host "Do you want to launch, destroy, or do nothing with the Terraform server? ([l]aunch/[d]estroy/[n]othing)"
 if ($action -eq "l") {
-    # Get user input for launching the Cloud script
-    $lauche_cloud = Read-Host "Do you want to launch the Cloud script? (y/n)"
-    $lauche_cloud = $lauche_cloud -eq "y"
 
     # Check if AWS credentials file exists
     $aws_credentials_path = "$env:USERPROFILE\.aws\credentials"
@@ -119,30 +112,6 @@ if ($action -eq "l") {
     Write-Host "🚀 Applying Terraform configuration..."
     terraform apply -var "private_pem_key=$key_pair_path" -auto-approve
 
-    # Get the IP address of the EC2 instance
-    $nats_instance_ip = terraform output -raw nats_instance_public_ip
-    # Ensure there's no whitespace
-    $nats_instance_ip = $nats_instance_ip.Trim()
-    
-    Pop-Location
-
-    # Start Cloud server
-    if ($lauche_cloud) {
-        Write-Host "🌐 Starting Cloud script..."
-        
-        # Create the full NATS URL with explicit string formatting
-        $natsUrl = [string]::Format("nats://{0}:4222", $nats_instance_ip)
-
-        # Create argument list with explicit elements
-        $argumentList = @()
-        $argumentList += "cloud/cloud.py"
-        $argumentList += $natsUrl
-        
-        # Start the Python process with arguments
-        $cloud_process = Start-Process -FilePath "python" -ArgumentList $argumentList -PassThru
-        $global:cloud_pid = $cloud_process.Id
-    }
-
 } elseif ($action -eq "d") {
     Write-Host "🛑 Destroying Terraform-managed infrastructure..."
     Push-Location "terraform"
@@ -153,6 +122,7 @@ if ($action -eq "l") {
     if ($close -eq "n") {
         exit
     }
+}
 
 elseif ($action -eq "n") {
     Write-Host "Continuing with the setup script..."
