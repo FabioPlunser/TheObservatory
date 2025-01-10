@@ -38,6 +38,7 @@
 data
 
 __pycache__/
+src/onPremise/server/__pycache__/
 venv
 venvWin
 
