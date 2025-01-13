@@ -30,7 +30,7 @@ class Server:
     ):
         self.bucket_handler = bucket_handler
         self.nats_client = nats_client
-        self.rekognition_client = boto3.client("rekognition", region_name="us-east-1")
+        self.recognition_client = boto3.client("rekognition", region_name="us-east-1")
         self.running = False
         self.tasks = []
 
@@ -222,7 +222,7 @@ class Server:
             for known_face in known_faces:
                 try:
                     logger.info(f"Comparing faces: {known_face} vs {unknown_face_key}")
-                    response = self.rekognition_client.compare_faces(
+                    response = self.recognition_client.compare_faces(
                         SourceImage={
                             "S3Object": {
                                 "Bucket": self.bucket_handler.bucket_name,
@@ -244,12 +244,13 @@ class Server:
                                 "similarity": response["FaceMatches"][0]["Similarity"],
                             }
                         )
-                except self.rekognition.exceptions.InvalidParameterException:
-                    logger.warning(f"No face detected in {known_face}")
                 except Exception as e:
                     logger.error(f"Failed to compare faces: {e}")
                     continue
 
+            unknonw_face_url = self.bucket_handler.generate_presigned_download_url(
+                company_id, unknown_face_key, expires_in=3600
+            )
             if not matches:
                 # No matches found - send alert
                 logger.error("Unknown face detected")
@@ -257,11 +258,11 @@ class Server:
                     f"{Commands.ALARM.value}.{company_id}",
                     json.dumps(
                         {
-                            "type": "unknown_face",
                             "company_id": company_id,
                             "camera_id": camera_id,
-                            "face_id": face_id,
+                            "unknown_face_url": unknonw_face_url,
                             "track_id": track_id,
+                            "face_id": face_id,
                         }
                     ).encode(),
                 )

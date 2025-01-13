@@ -72,7 +72,6 @@ class EdgeServer:
                     Commands.INIT_BUCKET.value, {"company_id": company_id}
                 )
 
-
                 if response and response.get("success"):
                     logger.info("Successfully initialized bucket")
                     await self.db.update_company_init_bucket(True)
@@ -358,40 +357,43 @@ class EdgeServer:
         try:
             logger.info(f"Received alert: {msg.subject}")
             data = json.loads(msg.data.decode())
-            alert_type = data.get("type")
             camera_id = data.get("camera_id")
+            unknown_face_url = data.get("unknown_face_url")
+            track_id = data.get("track_id")
+            face_id = data.get("face_id")
             company_id = data.get("company_id")
 
-            # Verify this aler is for one of our cameras
+            # Verify this alert is for one of our cameras
             if camera_id not in self.cameras:
-                # Not our camera, republish for other edge server
                 await nats_client.publish_message(
                     f"{Commands.ALARM.value}.{company_id}", msg.data
                 )
                 return
 
-            if alert_type == "unknown_face":
-                face_id = data.get("face_id")
-                track_id = data.get("track_id")
+            """update that the certain camera has an unknown face. So that the correct videostream can be shown on the website"""
+            await self.db.update_camera_unknown_face(camera_id, True, unknown_face_url)
 
-                if camera_id in self.processors:
-                    processor = self.processors[camera_id]
-                    if hasattr(processor, "person_tracker"):
-                        if track_id in processor.person_tracker.tracked_person:
-                            person = processor.person_tracker.tracked_persons[track_id]
-                            person_recogintion_status = "unknonw"
+            if camera_id in self.processors:
+                processor = self.processors[camera_id]
+                if hasattr(processor, "person_tracker"):
+                    if track_id in processor.person_tracker.tracked_person:
+                        person = processor.person_tracker.tracked_persons[track_id]
+                        person_recogintion_status = "unknonw"
 
-            logger.info(f"Received alert for camera {camera_id}: {alert_type}")
+            logger.info(f"Received alert for camera {camera_id}")
 
             alarms = await self.db.get_all_alarms()
+
             for alarm in alarms:
+                await self.db.update_alarm_status(
+                    alarm["id"], True, None, datetime.now()
+                )
+
                 alarm_ws = self.alarms[alarm["id"]].get("websocket")
                 if alarm_ws:
                     await alarm_ws.send_json(
                         {
-                            "type": "alarm_trigger",
-                            "camera_id": camera_id,
-                            "timestamp": datetime.now().isoformat(),
+                            "active": "true",
                         }
                     )
 

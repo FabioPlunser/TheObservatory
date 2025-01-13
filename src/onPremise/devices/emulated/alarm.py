@@ -6,7 +6,7 @@ import websockets
 import platform
 import json
 import os
-
+import pygame
 from edge_server_discover import EdgeServerDiscovery
 from datetime import datetime
 
@@ -27,6 +27,16 @@ class Alarm:
         self.discovery = EdgeServerDiscovery()
         self.websocket = None
         self.alarm_active = False
+        self.reconnect_attempt = 0
+        self.max_reconnect_delay = (
+            60  # Maximum delay between reconnection attempts in seconds
+        )
+        pygame.mixer.init()
+        self.sound = None
+        try:
+            self.sound = pygame.mixer.Sound("alarm.wav")
+        except Exception as e:
+            logger.error(f"Failed to load alarm sound: {e}")
 
     async def discover_edge_server(self):
         """Discover edge server"""
@@ -48,11 +58,6 @@ class Alarm:
         try:
             registration_data = {
                 "alarm_id": self.alarm_id,
-                "name": f"Alarm {self.alarm_id[:8]}",
-                "capabilities": {
-                    "sound": True,
-                    "light": True,
-                },
             }
 
             async with aiohttp.ClientSession() as session:
@@ -75,48 +80,88 @@ class Alarm:
             logger.error(f"Registration failed: {e}")
             return False
 
+    def calculate_reconnect_delay(self):
+        """Calculate delay before next reconnection attempt using exponential backoff"""
+        delay = min(2**self.reconnect_attempt, self.max_reconnect_delay)
+        self.reconnect_attempt += 1
+        return delay
+
     async def connect_websocket(self):
-        """Connect to edge server websocket"""
-        if not self.edge_server_url:
-            logger.error("No edge server URL available")
-            return
+        """Connect to edge server websocket with automatic reconnection"""
+        while True:  # Keep trying to connect
+            try:
+                if not self.edge_server_url:
+                    if not await self.discover_edge_server():
+                        delay = self.calculate_reconnect_delay()
+                        logger.info(
+                            f"Will attempt to rediscover server in {delay} seconds"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
 
-        ws_url = self.edge_server_url.replace("http", "ws")
-        full_url = f"{ws_url}/ws/alarms/{self.alarm_id}"
+                if not await self.register_with_edge():
+                    delay = self.calculate_reconnect_delay()
+                    logger.info(f"Will attempt to register again in {delay} seconds")
+                    await asyncio.sleep(delay)
+                    continue
 
-        try:
-            self.websocket = await websockets.connect(full_url)
-            logger.info(f"WebSocket connected for alarm {self.alarm_id}")
+                ws_url = self.edge_server_url.replace("http", "ws")
+                full_url = f"{ws_url}/ws/alarms/{self.alarm_id}"
 
-            async for message in self.websocket:
-                try:
-                    data = json.loads(message)
-                    if data.get("type") == "alarm_trigger":
-                        await self.trigger_alarm()
-                    elif data.get("type") == "alarm_stop":
-                        await self.stop_alarm()
-                except json.JSONDecodeError:
-                    logger.error("Failed to decode WebSocket message")
-                except Exception as e:
-                    logger.error(f"Error processing WebSocket message: {e}")
+                async with websockets.connect(full_url) as websocket:
+                    self.websocket = websocket
+                    logger.info(f"WebSocket connected for alarm {self.alarm_id}")
+                    self.reconnect_attempt = (
+                        0  # Reset reconnection counter on successful connection
+                    )
 
-        except Exception as e:
-            logger.error(f"WebSocket connection error: {e}")
-        finally:
-            if self.websocket:
-                await self.websocket.close()
-            logger.info("WebSocket connection closed")
+                    async for message in websocket:
+                        try:
+                            data = json.loads(message)
+                            if data.get("active") == "true":
+                                self.alarm_active = True
+                                asyncio.create_task(self.trigger_alarm())
+                            elif data.get("active") == "false":
+                                self.alarm_active = False
+                            if data.get("alive"):
+                                logger.info("Alive message received")
+
+                        except json.JSONDecodeError:
+                            logger.error("Failed to decode WebSocket message")
+                        except Exception as e:
+                            logger.error(f"Error processing WebSocket message: {e}")
+
+            except websockets.exceptions.ConnectionClosed:
+                logger.warning(
+                    "WebSocket connection closed, attempting to reconnect..."
+                )
+                self.websocket = None
+                delay = self.calculate_reconnect_delay()
+                await asyncio.sleep(delay)
+
+            except Exception as e:
+                logger.error(f"WebSocket connection error: {e}")
+                self.websocket = None
+                delay = self.calculate_reconnect_delay()
+                await asyncio.sleep(delay)
+
+            finally:
+                if self.websocket:
+                    await self.websocket.close()
+                    self.websocket = None
 
     async def trigger_alarm(self):
         """Activate the alarm"""
-        self.alarm_active = True
         logger.info("Alarm triggered!")
         while self.alarm_active:
-            if platform.system() == "Windows":
-                import winsound
-                winsound.Beep(1000, 1000)  # frequency=1000Hz, duration=1000ms
-            elif platform.system() == "Linux" or platform.system() == "Darwin":
-                os.system("play -nq -t alsa synth 1 sine 1000")  # Requires sox package
+            if self.sound:
+                self.sound.play()
+            await asyncio.sleep(1)  # Non-blocking sleep
+
+        # Stop the sound when alarm_active becomes False
+        if self.sound:
+            self.sound.stop()
+        logger.info("Alarm stopped")
 
     async def stop_alarm(self):
         """Deactivate the alarm"""
@@ -124,17 +169,14 @@ class Alarm:
         logger.info("Alarm stopped")
 
     async def start(self):
-        """Start the alarm client"""
+        """Start the alarm client with automatic reconnection"""
         try:
-            if not await self.discover_edge_server():
-                logger.error("No edge server found")
-                return
-
-            if await self.register_with_edge():
-                await self.connect_websocket()
+            self.is_running = True
+            await self.connect_websocket()
         except Exception as e:
-            logger.error(f"Error starting alarm: {e}")
+            logger.error(f"Error in alarm main loop: {e}")
         finally:
+            self.is_running = False
             if self.websocket:
                 await self.websocket.close()
 
