@@ -17,14 +17,15 @@ resource "aws_instance" "cloud_instance" {
 
   sudo su
   yum update -y
-  yum upgrade -y 
-
   yum install -y python3
   yum install -y python3-pip
+
+  cd /home/ec2-user/
   pip install -r requirements.txt
 
   python server.py
 EOF
+
   iam_instance_profile = "LabInstanceProfile"
 
   # First copy the application files
