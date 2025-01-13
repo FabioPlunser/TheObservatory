@@ -27,51 +27,30 @@ import uuid
 Base = declarative_base()
 
 
-# Models
-class Room(Base):
-    __tablename__ = "rooms"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False)
-    alarm_active = Column(Boolean, default=False)
-
-    # Relationships
-    cameras = relationship("Camera", back_populates="room")
-    alarms = relationship("Alarm", back_populates="room")
-
-
 class Camera(Base):
     __tablename__ = "cameras"
 
     id = Column(String, primary_key=True)
     name = Column(String)
-    room_id = Column(Integer, ForeignKey("rooms.id"))
     rtsp_url = Column(String)
     status = Column(String)
     last_seen = Column(DateTime)
 
-    # Relationships
-    room = relationship("Room", back_populates="cameras")
-    alarms = relationship("Alarm", back_populates="camera")
+    detected_unknown_face = Column(Boolean)
+    uknown_face_url = Column(String)
+
     face_detections = relationship("FaceDetection", back_populates="camera")  # Add this
 
 
 class Alarm(Base):
     __tablename__ = "alarm"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    camera_id = Column(String, ForeignKey("cameras.id"))
-    room_id = Column(Integer, ForeignKey("rooms.id"))
+    id = Column(String, primary_key=True)
     last_seen = Column(DateTime)
-    status = Column(String)
     active = Column(Boolean)
-
-    # Relationships
-    camera = relationship("Camera", back_populates="alarms")
-    room = relationship("Room", back_populates="alarms")
+    # manual_deactivation = Column(Boolean)
+    last_trigger = Column(DateTime)
+    connected = Column(Boolean)
 
 
 class KnownFace(Base):
@@ -91,7 +70,7 @@ class FaceDetection(Base):
     __tablename__ = "face_detections"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    camera_id = Column(String, ForeignKey("cameras.id"))
+    camera_id = Column(String, ForeignKey("cameras.id"), nullable=True)
     known_face_id = Column(Integer, ForeignKey("known_faces.id"), nullable=True)
     detection_time = Column(DateTime, default=datetime.now)
     confidence = Column(Float)
@@ -117,6 +96,40 @@ class Company(Base):
     name = Column(String, nullable=True)
     cloud_url = Column(String, nullable=True)
     init_bucket = Column(Boolean, default=False)
+
+
+class ReidConfig(Base):
+    __tablename__ = "reid_config"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    max_person_age = Column(Integer, default=3600)
+    reid_threshold = Column(Float, default=0.5)
+    spatial_weight = Column(Float, default=0.5)
+    temporal_weight = Column(Float, default=0.5)
+
+
+class PersonTracking(Base):
+    __tablename__ = "person_tracking"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    global_id = Column(String, nullable=False)
+    last_seen = Column(DateTime, nullable=False)
+    face_id = Column(String, nullable=True)
+    recognition_status = Column(String, nullable=False, default="pending")
+    camera_ids = Column(JSON, nullable=False)  # List of cameras where person was seen
+    face_embedding = Column(
+        JSON, nullable=True
+    )  # Store face embedding for faster matching
+
+
+class TrackingConfig(Base):
+    __tablename__ = "tracking_config"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    stale_track_timeout = Column(Integer, default=1800)  # 30 minutes in seconds
+    reid_timeout = Column(Integer, default=3600)  # 1 hour in seconds
+    face_recognition_timeout = Column(Integer, default=7200)  # 2 hours in seconds
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class Database:
@@ -260,48 +273,36 @@ class Database:
                 camera.last_seen = datetime.now()
                 await session.commit()
 
-    async def get_rooms(self) -> List[Dict]:
-        async with self.async_session() as session:
-            stmt = select(Room)
-            result = await session.execute(stmt)
-            rooms = result.scalars().all()
-            return [room.__dict__ for room in rooms]
-
-    async def create_room(self, room_name: str) -> Room:
-        async with self.async_session() as session:
-            room = Room(name=room_name)
-            session.add(room)
-            await session.commit()
-            return room
-
-    async def assign_camera_room(self, camera_id: str, room_id: int):
+    async def update_camera_unknown_face(
+        self, camera_id: str, detected_unknown_face: bool, unknown_face_url: str
+    ):
         async with self.async_session() as session:
             stmt = select(Camera).where(Camera.id == camera_id)
             result = await session.execute(stmt)
             camera = result.scalar_one_or_none()
             if camera:
-                camera.room_id = room_id
+                camera.detected_unknown_face = detected_unknown_face
+                camera.unknown_face_url = unknown_face_url
                 await session.commit()
 
-    async def get_room_camera(self, room_id: int) -> List[Dict]:
+    async def get_cameras_which_detected_unknown_face(self) -> Optional[Dict]:
         async with self.async_session() as session:
-            stmt = select(Camera).where(Camera.room_id == room_id)
+            stmt = select(Camera).where(Camera.detected_unknown_face == True)
             result = await session.execute(stmt)
-            cameras = result.scalars().all()
-            return [camera.__dict__ for camera in cameras]
+            camera = result.scalar_one_or_none()
+            if camera:
+                return camera.__dict__
+            return
 
     async def create_alarm(
         self,
         alarm_id: str,
-        status: str,
     ) -> Alarm:
         async with self.async_session() as session:
             alarm = Alarm(
                 id=alarm_id,
-                camera_id=None,
-                room_id=None,
+                connected=True,
                 last_seen=datetime.now(),
-                status=status,
                 active=False,
             )
             session.add(alarm)
@@ -317,14 +318,35 @@ class Database:
                 await session.delete(alarm)
                 await session.commit()
 
-    async def set_alarm_active(self, alarm_id: int, active: bool):
+    async def update_alarm_status(
+        self,
+        alarm_id: str,
+        active: Optional[bool] = None,
+        connected: Optional[bool] = None,
+        last_trigger: Optional[datetime] = None,
+    ):
+        """Update alarm status with face URL"""
         async with self.async_session() as session:
             stmt = select(Alarm).where(Alarm.id == alarm_id)
             result = await session.execute(stmt)
             alarm = result.scalar_one_or_none()
+
             if alarm:
-                alarm.active = active
+                if connected is not None:
+                    alarm.connected = connected
+                if active is not None:
+                    alarm.active = active
+                if last_trigger:
+                    alarm.last_trigger = last_trigger
                 await session.commit()
+
+    async def get_active_alarms(self) -> List[Dict]:
+        """Get currently triggered alarms"""
+        async with self.async_session() as session:
+            stmt = select(Alarm).where(Alarm.active == True)
+            result = await session.execute(stmt)
+            alarms = result.scalars().all()
+            return [alarm.__dict__ for alarm in alarms]
 
     async def get_alarm(self, alarm_id: int) -> Optional[Dict]:
         async with self.async_session() as session:
@@ -338,36 +360,6 @@ class Database:
     async def get_all_alarms(self) -> List[Dict]:
         async with self.async_session() as session:
             stmt = select(Alarm)
-            result = await session.execute(stmt)
-            alarms = result.scalars().all()
-            return [alarm.__dict__ for alarm in alarms]
-
-    async def set_room_alarm_status(self, room_id: int, active: bool):
-        async with self.async_session() as session:
-            stmt = select(Room).where(Room.id == room_id)
-            result = await session.execute(stmt)
-            room = result.scalar_one_or_none()
-            if room:
-                room.alarm_active = active
-                await session.commit()
-
-    async def get_alarms(self) -> List[Dict]:
-        async with self.async_session() as session:
-            stmt = select(Alarm)
-            result = await session.execute(stmt)
-            alarms = result.scalars().all()
-            return [alarm.__dict__ for alarm in alarms]
-
-    async def get_armed_alarms(self) -> List[Dict]:
-        async with self.async_session() as session:
-            stmt = select(Alarm).where(Alarm.active == True)
-            result = await session.execute(stmt)
-            alarms = result.scalars().all()
-            return [alarm.__dict__ for alarm in alarms]
-
-    async def get_alarms_room(self, room_id: int) -> List[Dict]:
-        async with self.async_session() as session:
-            stmt = select(Alarm).where(Alarm.room_id == room_id)
             result = await session.execute(stmt)
             alarms = result.scalars().all()
             return [alarm.__dict__ for alarm in alarms]
@@ -436,3 +428,117 @@ class Database:
             if detection:
                 await session.delete(detection)
                 await session.commit()
+
+    async def get_reid_config(self) -> Dict:
+        async with self.async_session() as session:
+            stmt = select(ReidConfig)
+            result = await session.execute(stmt)
+            config = result.scalar_one_or_none()
+            if not config:
+                config = ReidConfig()
+                session.add(config)
+                await session.commit()
+            return {
+                "max_person_age": config.max_person_age,
+                "reid_threshold": config.reid_threshold,
+                "spatial_weight": config.spatial_weight,
+                "temporal_weight": config.temporal_weight,
+            }
+
+    async def update_reid_config(self, **kwargs):
+        async with self.async_session() as session:
+            stmt = select(ReidConfig)
+            result = await session.execute(stmt)
+            config = result.scalar_one_or_none()
+            if not config:
+                config = ReidConfig()
+                session.add(config)
+
+            for key, value in kwargs.items():
+                if hasattr(config, key):
+                    setattr(config, key, value)
+
+            await session.commit()
+
+    async def cleanup_old_tracks(self):
+        """Remove tracks that haven't been seen for longer than max_person_age"""
+        async with self.async_session() as session:
+            config = await self.get_reid_config()
+            max_age = timedelta(seconds=config["max_person_age"])
+            cutoff_time = datetime.now() - max_age
+
+            stmt = select(PersonTracking).where(PersonTracking.last_seen < cutoff_time)
+            result = await session.execute(stmt)
+            old_tracks = result.scalars().all()
+
+            for track in old_tracks:
+                await session.delete(track)
+
+            await session.commit()
+            return len(old_tracks)
+
+    async def update_person_track(
+        self,
+        global_id: str,
+        camera_id: str,
+        face_id: Optional[str] = None,
+        recognition_status: Optional[str] = None,
+    ):
+        async with self.async_session() as session:
+            stmt = select(PersonTracking).where(PersonTracking.global_id == global_id)
+            result = await session.execute(stmt)
+            track = result.scalar_one_or_none()
+
+            if not track:
+                track = PersonTracking(
+                    global_id=global_id,
+                    camera_ids=[camera_id],
+                    last_seen=datetime.now(),
+                )
+                session.add(track)
+            else:
+                track.last_seen = datetime.now()
+                if camera_id not in track.camera_ids:
+                    track.camera_ids.append(camera_id)
+
+            if face_id:
+                track.face_id = face_id
+            if recognition_status:
+                track.recognition_status = recognition_status
+
+            await session.commit()
+
+    async def get_tracking_config(self) -> Dict:
+        """Get tracking configuration"""
+        async with self.async_session() as session:
+            stmt = select(TrackingConfig)
+            result = await session.execute(stmt)
+            config = result.scalar_one_or_none()
+
+            if not config:
+                config = TrackingConfig()
+                session.add(config)
+                await session.commit()
+
+            return {
+                "stale_track_timeout": config.stale_track_timeout,
+                "reid_timeout": config.reid_timeout,
+                "face_recognition_timeout": config.face_recognition_timeout,
+            }
+
+    async def update_tracking_config(self, **kwargs):
+        """Update tracking configuration"""
+        async with self.async_session() as session:
+            stmt = select(TrackingConfig)
+            result = await session.execute(stmt)
+            config = result.scalar_one_or_none()
+
+            if not config:
+                config = TrackingConfig()
+                session.add(config)
+
+            for key, value in kwargs.items():
+                if hasattr(config, key):
+                    setattr(config, key, value)
+
+            await session.commit()

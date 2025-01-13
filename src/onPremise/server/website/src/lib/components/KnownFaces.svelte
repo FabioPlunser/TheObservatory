@@ -29,7 +29,6 @@
       }
 
       const data = await res.json();
-      console.log(data);
 
       await getKnwonFaces();
     } catch (error) {
@@ -42,7 +41,6 @@
   async function getKnwonFaces() {
     const res = await fetch(`${SERVER_URL}/api/faces/known/all`);
     const data = await res.json();
-    console.log(data);
     knownFaces = data.faces;
   }
 
@@ -51,7 +49,6 @@
       method: "POST",
     });
     const data = await res.json();
-    console.log(data);
     await getKnwonFaces();
   }
 

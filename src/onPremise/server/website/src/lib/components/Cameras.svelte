@@ -5,8 +5,6 @@
   // -------------------------------------------------------------------
   // -------------------------------------------------------------------
   let cameras: any[] = $state([]);
-  let rooms: any[] = $state([]);
-  let selectedRoom: string | null = null;
   // -------------------------------------------------------------------
   // -------------------------------------------------------------------
   onMount(async () => {
@@ -18,25 +16,16 @@
   // -------------------------------------------------------------------
   const SERVER_URL = import.meta.env.VITE_SERVER_URL;
   async function loadData() {
-    const [camerasRes, roomsRes] = await Promise.all([
-      fetch(`${SERVER_URL}/api/get-cameras`),
-      fetch(`${SERVER_URL}/api/get-rooms`),
-    ]);
-    cameras = await camerasRes.json();
-    rooms = await roomsRes.json();
+    let res = await fetch(`${SERVER_URL}/api/cameras`);
+    cameras = await res.json();
   }
   // -------------------------------------------------------------------
-  let filteredCameras = $derived.by(() => {
-    selectedRoom ? cameras.filter((c) => c.room_id === selectedRoom) : cameras;
-  });
   // -------------------------------------------------------------------
-  // -------------------------------------------------------------------
-  async function deleteCamera(camera) {
-    let res = await fetch(`${SERVER_URL}/api/delete-camera/${camera.id}`, {
+  async function deleteCamera(camera: any) {
+    let res = await fetch(`${SERVER_URL}/api/camera/delete/${camera.id}`, {
       method: "POST",
     });
     let data = await res.json();
-    console.log(data);
     loadData();
   }
   // -------------------------------------------------------------------
@@ -44,23 +33,26 @@
 </script>
 
 <div class="mx-4">
-  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-    {#if cameras.length > 0}
+  {#if cameras.length > 0}
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {#each cameras as camera (camera.id)}
         <div class="rounded-lg p-4 bg-base-200 shadow-lg">
-          <div class="mb-2 flex justify-between items-center">
-            <div>
+          <div class="mb-2 flex justify-between items-center relative">
+            <div class="font-bold">
+              <Icon icon="material-symbols:live-tv" width="24" height="24" />
               <h1 class="text-lg font-bold">
-                {camera.name}
+                Name: {camera.name}
               </h1>
-              <p>Id: {camera.id}</p>
+              <h1>ID: {camera.id}</h1>
             </div>
             <button
+              class="absolute top-0 right-0 p-2"
               onclick={async () => {
                 await deleteCamera(camera);
                 loadData();
               }}
               ><Icon
+                class="text-red-500"
                 icon="material-symbols:delete"
                 width="24"
                 height="24"
@@ -72,11 +64,7 @@
             <VideoStream cameraId={camera.id} />
           </div>
 
-          <div class="mt-2 text-sm">
-            <p>
-              Room: {rooms.find((r) => r.id === camera.room_id)?.name ||
-                "Unassigned"}
-            </p>
+          <div class="mt-2 text-sm font-bold flex flex-col gap-2">
             {#if camera.status === "offline"}
               <div class="badge badge-error">{camera.status}</div>
             {/if}
@@ -87,10 +75,10 @@
           </div>
         </div>
       {/each}
-    {:else}
-      <h1 class="flex justify-center mx-auto font-bold text-2xl">
-        No cameras connected
-      </h1>
-    {/if}
-  </div>
+    </div>
+  {:else}
+    <h1 class="flex justify-center w-full mx-auto font-bold text-2xl">
+      No cameras found
+    </h1>
+  {/if}
 </div>

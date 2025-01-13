@@ -4,13 +4,14 @@
   import { onMount, setContext } from "svelte";
   import { getState } from "$lib/helper/globalState.svelte";
   import { getCompany, update_cloud_url } from "$lib/helper/fetches";
+  import AlarmPopup from "$lib/components/AlarmPopup.svelte";
 
   let { children } = $props();
 
   let company = getState<Company | undefined>("company", undefined);
+  let alarms = $state([]);
 
   const SERVER_URL = import.meta.env.VITE_SERVER_URL;
-  console.log(SERVER_URL);
 
   let url = $state();
   async function update_url(e) {
@@ -25,15 +26,39 @@
     let res = await getCompany();
     let data = await res.json();
     if (data?.company) {
-      console.log(data.company);
       company.value = data.company;
     }
+    setInterval(getActiveAlarm, 1000);
   });
+
+  async function getActiveAlarm() {
+    let res = await fetch(`${SERVER_URL}/api/alarm`);
+    let data = await res.json();
+    alarms = data.alarms;
+  }
+
+  async function dismissAlarm() {
+    try {
+      const res = await fetch(`${SERVER_URL}/alarm/reset`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        alarms = [];
+      }
+    } catch (error) {
+      console.error("Error dismissing alarm:", error);
+    }
+  }
 </script>
 
-<main class="dark:text-white">
+<main class="mx-4">
+  {#if alarms && alarms.length > 0}
+    <AlarmPopup {alarms} />
+  {/if}
   {#if company.value && !company.value.cloud_url}
-    <div class="flex justify-center mx-auto my-auto h-screen pt-24 gap-4">
+    <div
+      class="flex justify-center mx-auto my-auto h-screen pt-24 gap-4 text-white"
+    >
       <div class="w-min">
         <input
           class="input input-bordered"

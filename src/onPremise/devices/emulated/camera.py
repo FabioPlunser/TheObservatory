@@ -117,7 +117,7 @@ class Camera:
                 "-rtbufsize",
                 "100M",
                 "-i",
-                "video=Integrated Webcam",
+                "video=USB Video",
             ]
 
     def get_ffmpeg_output_args(self, rtsp_url):
@@ -141,17 +141,36 @@ class Camera:
         ]
 
         # GPU-specific encoder settings
+
         if self.gpu_vendor == "nvidia":
-            encoder_args = [
-                "-c:v",
-                "h264_nvenc",
-                "-rc",
-                "cbr_ld_hq",
-                "-zerolatency",
-                "1",
-                "-gpu",
-                "0",
-            ]
+            import subprocess
+
+            result = subprocess.run(
+                ["ffmpeg", "-encoders"], capture_output=True, text=True
+            )
+            if "h264_nvenc" in result.stdout:
+                logger.info("Using NVIDIA GPU encoding")
+                return [
+                    "-c:v",
+                    "h264_nvenc",
+                    "-preset",
+                    "p1",  # Use p1 preset instead of ultrafast
+                    "-tune",
+                    "ll",  # Low latency tuning
+                    "-b:v",
+                    "2M",  # Target bitrate
+                    "-maxrate",
+                    "4M",  # Maximum bitrate
+                    "-bufsize",
+                    "8M",  # Buffer size
+                    "-g",
+                    "30",  # Keyframe interval
+                    "-f",
+                    "rtsp",
+                    "-rtsp_transport",
+                    "tcp",
+                    rtsp_url,
+                ]
         elif self.gpu_vendor == "apple_silicon":
             encoder_args = [
                 "-c:v",
@@ -273,7 +292,7 @@ class Camera:
 
         parsed_url = urlparse(self.edge_server_url)
         server_ip = parsed_url.hostname
-        rtsp_port = 8554
+        rtsp_port = 8555
 
         self.rtsp_url = f"rtsp://{server_ip}:{rtsp_port}/{self.camera_id}"
         logger.info(f"RTSP URL: {self.rtsp_url}")

@@ -13,7 +13,7 @@
   import { getPages } from "$lib/helper/pages.svelte";
   // -------------------------------------------------------------------
   // -------------------------------------------------------------------
-  const theme = persistentStore("theme", "light");
+  const theme = persistentStore("darkMode", "false");
   let currentPage = persistentState("currentPage", {
     name: "Cameras",
     component: Cameras,
@@ -21,24 +21,26 @@
   let menuBarStates = getPages()?.value;
   // -------------------------------------------------------------------
   // -------------------------------------------------------------------
+  function updateTheme(v) {
+    theme.value = v;
+    document.documentElement.classList.toggle("dark", !theme.value);
+  }
 </script>
 
 <div class="w-full px-2 py-2 fixed top-0">
   <div class="mx-auto flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-bold dark:text-white">TheObservatory</h1>
+      <h1 class="text-3xl font-bold">TheObservatory</h1>
     </div>
 
-    <div>
+    <div class="pr-4">
       <label class="swap swap-rotate">
         <!-- this hidden checkbox controls the state -->
         <input
           type="checkbox"
           class="theme-controller"
           value="light"
-          checked={theme.value === "dark"}
-          onchange={(e) =>
-            (theme.value = e.currentTarget.checked ? "dark" : "light")}
+          bind:checked={() => theme.value, updateTheme}
         />
 
         <!-- sun icon -->
@@ -70,7 +72,7 @@
 <!-- Menu in the center -->
 <div class="fixed left-1/2 top-0 -translate-x-1/2 flex justify-center pt-2">
   <ul
-    class="menu menu-horizontal gap-2 bg-base-200 rounded-box dark:text-white"
+    class="menu menu-horizontal gap-2 dark:bg-base-200 bg-zinc-400 rounded-box"
   >
     {#each menuBarStates as option}
       <li>

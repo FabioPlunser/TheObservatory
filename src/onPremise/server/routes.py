@@ -14,6 +14,7 @@ from edge_server import EdgeServer
 from database import Database
 from nats_client import SharedNatsClient, Commands
 from logging_config import setup_logger
+from typing import Optional
 
 import asyncio
 import aiohttp
@@ -22,6 +23,9 @@ import uuid
 import json
 import os
 import ipaddress
+import zlib
+import time
+
 
 setup_logger()
 logger = logging.getLogger("Router")
@@ -142,6 +146,7 @@ class Router:
 
             try:
                 await websocket.accept()
+
                 while True:
                     try:
                         # Check for client messages (non-blocking)
@@ -155,15 +160,18 @@ class Router:
                             pass
 
                         # Get and send frame
-                        frame_bytes = await self.edge_server.get_frame(camera_id)
-                        if frame_bytes is not None:
-                            await websocket.send_bytes(frame_bytes)
+                        # if not self.edge_server.cameras[camera_id]:
+                        #     break
+
+                        frame = await self.edge_server.get_frame(camera_id)
+                        if frame is not None:
+                            await websocket.send_bytes(frame)
+
                         self.edge_server.cameras[camera_id][
                             "last_seen"
                         ] = datetime.now()
 
-                        # Control frame rate (approximately 30 FPS)
-                        await asyncio.sleep(0.033)
+                        # await asyncio.sleep(0.033)
 
                     except WebSocketDisconnect:
                         break
@@ -194,7 +202,7 @@ class Router:
                     }
                     return {"status": "success", "message": "alarm reconnected"}
 
-                alarm = await self.db.create_alarm(alarm_id, "registered")
+                alarm = await self.db.create_alarm(alarm_id)
 
                 self.edge_server.alarms[alarm_id] = {
                     "alarm_data": alarm,
@@ -211,42 +219,58 @@ class Router:
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
-        @router.get("/cameras")
-        async def get_cameras():
-            """Get list of connected cameras"""
-            return {
-                "cameras": [
-                    {
-                        "camera_id": camera_id,
-                        "capabilities": data["capabilities"],
-                        "last_seen": data["last_seen"].isoformat(),
-                        "status": data["status"],
-                    }
-                    for camera_id, data in self.edge_server.cameras.items()
-                ]
-            }
+        @router.get("/api/tracking-config")
+        async def get_tracking_config():
+            """Get tracking configuration"""
+            config = await self.db.get_tracking_config()
+            return config
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
-        @router.get("/api/get-cameras")
+        @router.post("/api/tracking-config")
+        async def update_tracking_config(
+            stale_track_timeout: Optional[int] = None,
+            reid_timeout: Optional[int] = None,
+            face_recognition_timeout: Optional[int] = None,
+        ):
+            """Update tracking configuration"""
+            update_data = {}
+            if stale_track_timeout is not None:
+                update_data["stale_track_timeout"] = stale_track_timeout
+            if reid_timeout is not None:
+                update_data["reid_timeout"] = reid_timeout
+            if face_recognition_timeout is not None:
+                update_data["face_recognition_timeout"] = face_recognition_timeout
+
+            await self.db.update_tracking_config(**update_data)
+            return {"status": "success", "message": "Configuration updated"}
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.get("/api/cameras")
         async def get_cameras_api():
             return await self.db.get_cameras()
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
-        @router.get("/api/get-alarms")
+        @router.get("/api/alarms")
         async def get_alarms():
-            return await self.db.get_all_alarms()
+            alarms = await self.db.get_all_alarms()
+            # check if alarm is still connected
+            for alarm in alarms:
+                try:
+                    ws = self.edge_server.alarms[alarm["id"]].get("websocket")
+                    if ws:
+                        await ws.send_json({"alive": "true"})
+                        await self.db.update_alarm_status(alarm["id"], False, True)
+                except Exception as e:
+                    logger.error(f"Error sending to alarm: {e}")
+                    await self.db.update_alarm_status(alarm["id"], False, False)
+            return alarms
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
-        @router.get("/api/get-alarm-devices")
-        async def get_alarm_devices_api():
-            return await self.db.get_alarm_devices()
-
-        # ----------------------------------------------------------------------------
-        # ----------------------------------------------------------------------------
-        @router.post("/api/delete-camera/{camera_id}")
+        @router.post("/api/camera/delete/{camera_id}")
         async def delete_camera(camera_id: str):
             """Delete a camera and clean up all associated resources"""
             try:
@@ -272,44 +296,6 @@ class Router:
                 error_msg = f"Error deleting camera {camera_id}: {str(e)}"
                 logger.error(error_msg)
                 raise HTTPException(status_code=500, detail=error_msg)
-
-        # ----------------------------------------------------------------------------
-        # ----------------------------------------------------------------------------
-        @router.post("/api/delete-alarm_device/{alarm_device_id}")
-        async def delete_alarm_device(alarm_device_id: str):
-            await self.db.delete_camera(alarm_device_id)
-            return {"status": "success", "message": "Alarm device deleted"}
-
-        # ----------------------------------------------------------------------------
-        # ----------------------------------------------------------------------------
-        @router.get("/api/get-rooms")
-        async def get_rooms():
-            return await self.db.get_rooms()
-
-        # ----------------------------------------------------------------------------
-        # ----------------------------------------------------------------------------
-        @router.post("/api/create-room")
-        async def create_room(room_name: str = Query(None)):
-            await self.db.create_room(room_name)
-            return {"status": "success", "message": "Room created"}
-
-        # ----------------------------------------------------------------------------
-        # ----------------------------------------------------------------------------
-        @router.put("/api/camera-to-room")
-        async def assign_camera_room(
-            camera_id: str = Query(None), room_id: str = Query(None)
-        ):
-            await self.db.assign_camera_room(camera_id, room_id)
-            return {"status": "success", "message": "Camera assigned to room"}
-
-        # ----------------------------------------------------------------------------
-        # ----------------------------------------------------------------------------
-        @router.put("/api/alarm-device-to-room")
-        async def assign_alarm_device_room(
-            alarm_device_id: str = Query(None), room_id: str = Query(None)
-        ):
-            await self.db.assign_alarm_device_room(alarm_device_id, room_id)
-            return {"status": "success", "message": "Camera assigned to room"}
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
@@ -505,5 +491,134 @@ class Router:
                 logger.error(f"WebSocket error: {e}")
             finally:
                 logger.info(f"WebSocket connection closed for alarm {alarm_id}")
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.get("/api/alarm")
+        async def get_alarm():
+            """Get any triggered alarms and their unknown face URLs"""
+            try:
+                alarms = await self.db.get_active_alarms()
+
+                if not alarms:
+                    return {"alarms": None}
+
+                # All alarms are active so we can just return the first one
+                alarm = alarms[0]
+
+                cameras = await self.db.get_cameras_which_detected_unknown_face()
+                if not cameras:
+                    return {"alarms": None}
+
+                # Safely construct alarm data
+                alarm_data = []
+                if isinstance(cameras, dict):  # Single camera
+                    cameras = [cameras]  # Convert to list for consistent handling
+
+                for camera in cameras:
+                    try:
+                        alarm_data.append(
+                            {
+                                "active": alarm["active"],
+                                "camera_id": camera.get("id"),
+                                "timestamp": alarm["last_trigger"],
+                                "unknown_face_url": camera.get("unknown_face_url"),
+                            }
+                        )
+                    except Exception as e:
+                        logger.error(f"Error processing camera data: {e}")
+                        continue
+
+                return {"alarms": alarm_data if alarm_data else None}
+
+            except Exception as e:
+                logger.error(f"Error in get_alarm route: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Internal server error while fetching alarm data",
+                )
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.post("/api/alarm/reset")
+        async def reset_alarms():
+            """Reset all alarms to inactive state"""
+            alarms = await self.db.get_all_alarms()
+            for alarm in alarms:
+                await self.db.update_alarm_status(alarm["id"], False)
+
+                # Notify websocket clients if connected
+                if alarm["id"] in self.edge_server.alarms:
+                    alarm_ws = self.edge_server.alarms[alarm["id"]].get("websocket")
+                    if alarm_ws:
+                        await alarm_ws.send_json(
+                            {
+                                "active": "false",
+                            }
+                        )
+
+            return {"status": "success", "message": "All alarms reset"}
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.post("/api/alarm/disable")
+        async def disable_alarm(alarm_id: str):
+            """Disable an alarm"""
+            await self.db.update_alarm_status(alarm_id, False)
+            try:
+                ws = self.edge_server.alarms[alarm_id].get("websocket")
+                logger.info(f"Disabling alarm {alarm_id}")
+                if ws:
+                    await ws.send_json({"active": "false"})
+                    await self.db.update_alarm_status(alarm_id, False, True)
+
+            except Exception as e:
+                logger.error(f"Error disabling alarm: {e}")
+                return {"status": "error", "message": "Alarm not connected anymore"}
+            return {"status": "success", "message": "Alarm disabled"}
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.post("/api/alarm/enable")
+        async def enable_alarm(alarm_id: str):
+            """Enable an alarm"""
+            await self.db.update_alarm_status(alarm_id, True)
+            try:
+                ws = self.edge_server.alarms[alarm_id].get("websocket")
+                logger.info(f"Disabling alarm {alarm_id}")
+                if ws:
+                    await ws.send_json({"active": "true"})
+            except Exception as e:
+                logger.error(f"Error disabling alarm: {e}")
+                await self.db.update_alarm_status(alarm_id, False, True)
+                return {"status": "error", "message": "Alarm not connected anymore"}
+
+            return {"status": "success", "message": "Alarm enabled"}
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.post("/api/alarm/enable/all")
+        async def enable_all_alarms(alarm_id: str):
+            """Enable an alarm"""
+            alarms = await self.db.get_all_alarms()
+            for alarm in alarms:
+                alarm_id = alarm["id"]
+                await self.db.update_alarm_status(alarm_id, True)
+                ws = self.edge_server.alarms[alarm_id].get("websocket")
+                if ws:
+                    await ws.send_json({"active": "True"})
+
+                return {"status": "success", "message": "Alarm enabled"}
+
+        # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
+        @router.post("/api/alarm/delete")
+        async def delete_alarm(alarm_id: str):
+            """Enable an alarm"""
+            await self.db.delete_alarm(alarm_id)
+            if alarm_id in self.edge_server.alarms:
+                del self.edge_server.alarms[alarm_id]
+
+            return {"status": "success", "message": "Alarm enabled"}
 
         return router

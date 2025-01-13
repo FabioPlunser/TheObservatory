@@ -8,6 +8,9 @@ export function persistentStore(key: string, value: any) {
   if (browser) {
     const item = localStorage.getItem(key);
     if (item) storage.value = JSON.parse(item);
+    if (!storage.value) {
+      document.documentElement.classList.toggle('dark', true);
+    }
   }
 
   $effect(() => {

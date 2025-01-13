@@ -17,11 +17,6 @@ export function getPages(): any {
       icon: undefined,
     },
     {
-      name: "Rooms",
-      component: Rooms,
-      icon: undefined,
-    },
-    {
       name: "Known Faces",
       component: KnownFaces,
       icon: undefined,

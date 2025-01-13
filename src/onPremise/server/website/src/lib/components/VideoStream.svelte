@@ -3,7 +3,7 @@
   import { onMount, onDestroy } from "svelte";
 
   let { cameraId } = $props();
-  let imgElement: HTMLImageElement;
+  let imgElement: HTMLImageElement | null = null;
   let ws: WebSocket;
   let isConnected = $state(false);
 
@@ -18,32 +18,31 @@
     ws.onmessage = function (event) {
       const blob = new Blob([event.data], { type: "image/jpeg" });
       const url = URL.createObjectURL(blob);
-      imgElement.src = url;
-      URL.revokeObjectURL(url); // Clean up
+      if (imgElement) {
+        imgElement.onload = () => {
+          URL.revokeObjectURL(url); // Revoke only after the image has loaded
+        };
+        imgElement.src = url;
+      }
     };
 
     ws.onopen = () => {
       isConnected = true;
-      console.log("WebSocket connected");
     };
 
     ws.onerror = (error) => {
-      console.error("WebSocket error", error);
       isConnected = false;
       setTimeout(connectWebSocket, 100);
     };
 
     ws.onclose = () => {
-      console.log("WebSocket closed");
       isConnected = false;
       setTimeout(connectWebSocket, 100);
     };
   }
 
   function cleanup() {
-    if (ws) {
-      ws.close();
-    }
+    ws.close();
   }
 
   onMount(() => {
@@ -64,7 +63,7 @@
     <div
       class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50"
     >
-      <p class="text-white">Connecting...</p>
+      <p class="">Connecting...</p>
     </div>
   {/if}
 </div>
