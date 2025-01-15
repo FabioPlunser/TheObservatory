@@ -83,30 +83,53 @@ class SharedNatsClient:
 
     @classmethod
     async def initialize(cls, nats_url):
-        if cls._instance is None:
-            try:
-                logger.info(f"Initializing nats client with url: {nats_url}")
-                cls._instance = NatsClient(nats_url)
-                # Add a timeout to the connection attempt
-                try:
-                    async with asyncio.timeout(5.0):  # 5 second timeout
-                        await cls._instance.connect()
-                except asyncio.TimeoutError:
-                    logger.error("NATS connection timed out")
-                    cls._instance = None
-                    return None
-                except Exception as e:
-                    logger.error(f"Failed to connect to NATS: {e}")
-                    cls._instance = None
-                    return None
+        """Initialize NATS client with improved error handling"""
+        if not nats_url:
+            logger.error("No NATS URL provided")
+            return None
 
-                if not cls._instance._connected:
-                    logger.error("Failed to connect to NATS")
-                    cls._instance = None
-            except Exception as e:
-                logger.error(f"Failed to initialize NATS client: {e}")
+        try:
+            logger.info(f"Initializing NATS client with URL: {nats_url}")
+            
+            # Close existing instance if it exists
+            if cls._instance is not None:
+                await cls._instance.close()
                 cls._instance = None
-        return cls._instance
+
+            # Create new instance
+            cls._instance = NatsClient(nats_url)
+            
+            # Try to connect with timeout
+            try:
+                async with asyncio.timeout(10.0):  # Increased timeout
+                    success = await cls._instance.connect()
+                    if not success:
+                        logger.error("Failed to connect to NATS")
+                        cls._instance = None
+                        return None
+            except asyncio.TimeoutError:
+                logger.error("NATS connection timed out")
+                cls._instance = None
+                return None
+            except Exception as e:
+                logger.error(f"Failed to connect to NATS: {e}")
+                cls._instance = None
+                return None
+
+            # Verify connection
+            if not cls._instance._connected:
+                logger.error("NATS client not properly connected")
+                cls._instance = None
+                return None
+
+            return cls._instance
+
+        except Exception as e:
+            logger.error(f"Error initializing NATS client: {e}")
+            if cls._instance:
+                await cls._instance.close()
+                cls._instance = None
+            return None
 
     @classmethod
     def get_instance(cls) -> Optional[NatsClient]:

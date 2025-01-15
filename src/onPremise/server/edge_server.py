@@ -38,34 +38,57 @@ class EdgeServer:
             logger.info("Bucket initialization task already running")
             return
 
+        # Check for NATS connection first
+        nats_client = SharedNatsClient.get_instance()
+        if not nats_client or not nats_client._connected:
+            logger.info("NATS client not connected, skipping bucket initialization")
+            return
+
+        company_id = await self.db.get_company_id()
+        cloud_url = await self.db.get_cloud_url()
+
+        if not cloud_url:
+            logger.info("No cloud URL configured, skipping bucket initialization")
+            return
+
+        if not company_id:
+            logger.error("No company ID found, skipping bucket initialization")
+            return
+
+        logger.info("Starting bucket initialization task")
         self._bucket_init_running = True
         self._bucket_init_task = asyncio.create_task(self._bucket_init_retry())
-        logger.info("Started bucket initialization background task")
 
     async def _bucket_init_retry(self):
-        """Background task to retry bucket initialization until successful and setup alert subscription"""
-        retry_delay = 5  # Start with 5 second delay between retries
+        """Background task to retry bucket initialization until successful"""
+        retry_delay = 5
+        max_retries = 10
+        retry_count = 0
 
-        while self._bucket_init_running:
+        while self._bucket_init_running and retry_count < max_retries:
             try:
-                self.nats_client = SharedNatsClient.get_instance()
                 company_id = await self.db.get_company_id()
+                cloud_url = await self.db.get_cloud_url()
                 company_init_bucket = await self.db.get_company_init_bucket()
 
-                if not company_id:
-                    logger.error("No company ID found in database")
+                if not cloud_url:
+                    logger.info("No cloud URL configured, waiting...")
                     await asyncio.sleep(retry_delay)
                     continue
 
                 if company_init_bucket:
                     logger.info("Bucket already initialized")
-                    self._bucket_init_running = False
                     break
 
-                if not self.nats_client:
-                    logger.error("NATS client not initialized bucket")
-                    await asyncio.sleep(retry_delay)
-                    continue
+                # Initialize NATS client if needed
+                if not self.nats_client or not self.nats_client._connected:
+                    logger.info(f"Initializing NATS client with URL: {cloud_url}")
+                    self.nats_client = await SharedNatsClient.initialize(cloud_url)
+                    if not self.nats_client:
+                        logger.error("Failed to initialize NATS client")
+                        retry_count += 1
+                        await asyncio.sleep(retry_delay)
+                        continue
 
                 response = await self.nats_client.send_message_with_reply(
                     Commands.INIT_BUCKET.value, {"company_id": company_id}
@@ -74,20 +97,23 @@ class EdgeServer:
                 if response and response.get("success"):
                     logger.info("Successfully initialized bucket")
                     await self.db.update_company_init_bucket(True)
-                    self._bucket_init_running = False
+                    await self._setup_alert_subscription()
                     break
                 else:
-                    logger.error("Failed to initialize bucket")
-                    # Increase retry delay up to max_delay
+                    logger.error(f"Failed to initialize bucket: {response}")
+                    retry_count += 1
 
             except Exception as e:
                 logger.error(f"Error in bucket initialization: {e}")
+                retry_count += 1
 
             await asyncio.sleep(retry_delay)
 
+        if retry_count >= max_retries:
+            logger.error("Max retries reached for bucket initialization")
+
+        self._bucket_init_running = False
         self._bucket_init_task = None
-        await self._setup_alert_subscription()
-        logger.info("Bucket initialization task completed")
 
     async def stop_bucket_init(self):
         """Stop the bucket initialization background task"""

@@ -21,13 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 class Server:
-    def __init__(
-        self,
-        bucket_handler: BucketHandler,
-        nats_client: NatsClient,
-    ):
-        self.bucket_handler = bucket_handler
-        self.nats_client = nats_client
+    def __init__(self):
+        self.bucket_handler = BucketHandler(
+            bucket_name=os.getenv("BUCKET_NAME"),
+            region_name=os.getenv("REGION"),
+        )
+        self.nats_client = NatsClient()
+        self.loop = asyncio.get_event_loop()
         self.recognition_client = boto3.client("rekognition", region_name="us-east-1")
         self.running = False
         self.tasks = []

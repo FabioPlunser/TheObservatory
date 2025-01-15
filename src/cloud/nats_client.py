@@ -21,6 +21,7 @@ class NatsClient:
             if not nats_url:
                 nats_url = "nats://localhost:4222"
             self.nc = await nats.connect(nats_url)
+            logger.info(f"Connected to NATS at {nats_url}")
         except Exception as e:
             logger.error(f"Failed to connect to nats with url {nats_url}: {e}")
 
@@ -62,7 +63,7 @@ class NatsClient:
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        await self.drain()
+        await self.close()
 
     def __enter__(self):
         return self
@@ -70,9 +71,6 @@ class NatsClient:
     def __exit__(self, exc_type, exc, tb):
         if self.nc:
             self.nc.drain()
-
-
-from enum import Enum
 
 
 class Commands(Enum):
