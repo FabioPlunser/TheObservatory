@@ -1,19 +1,18 @@
 from dataclasses import dataclass
 import numpy as np
 import torch
-from torchreid import models, utils
+from torchreid import models
 import cv2
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import threading
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple
 from scipy.spatial.distance import cdist
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import queue
 import logging
 from collections import deque
 import time
-import os
 from contextlib import nullcontext
 from multiprocessing import cpu_count
 from functools import lru_cache

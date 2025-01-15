@@ -6,12 +6,11 @@ from ultralytics import YOLO
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Dict, List, Tuple
+from typing import Optional
 import queue
 from person_tracker import OptimizedPersonTracker
 from reid_implementation import OptimizedCrossCameraTracker
 import os
-import asyncio
 
 logger = logging.getLogger("VideoProcessor")
 

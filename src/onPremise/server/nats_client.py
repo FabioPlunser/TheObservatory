@@ -1,5 +1,4 @@
 import nats
-import os
 import asyncio
 import logging
 import json

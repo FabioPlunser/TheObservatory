@@ -1,13 +1,8 @@
-import cv2
 import uuid
 import aiohttp
 import logging
 import asyncio
-import websockets
-import base64
-import json
 import platform
-from datetime import datetime
 from edge_server_discover import EdgeServerDiscovery
 
 logging.basicConfig(

@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 import numpy as np
 import cv2
-from typing import List, Dict, Tuple, Optional, Set
+from typing import List, Dict, Tuple, Optional
 import time
 import colorsys
 import torch

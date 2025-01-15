@@ -1,6 +1,4 @@
 import nats
-import os
-import asyncio
 import logging
 import json
 from enum import Enum

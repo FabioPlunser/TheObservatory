@@ -1,6 +1,4 @@
 from bucket_handler import BucketHandler
-from typing import Dict
-from botocore.exceptions import ClientError
 from nats_client import NatsClient, Commands
 from dotenv import load_dotenv
 

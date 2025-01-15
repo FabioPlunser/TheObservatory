@@ -3,12 +3,9 @@ import uuid
 import logging
 import aiohttp
 import websockets
-import platform
 import json
-import os
 import pygame
 from edge_server_discover import EdgeServerDiscovery
-from datetime import datetime
 
 logging.basicConfig(
     level=logging.INFO,
