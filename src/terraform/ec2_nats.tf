@@ -13,14 +13,38 @@ resource "aws_instance" "nats_instance" {
   exec > /var/log/user-data.log 2>&1
   set -x
 
-  sleep 10
+  # Update system and install dependencies
   yum update -y
-  yum install -y docker
-  service docker start
-  usermod -aG docker ec2-user
+  yum install -y tar wget
+
+  # Install NATS Server directly (not using Docker)
+  cd /tmp
+  wget https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-linux-amd64.tar.gz
+  tar -xzf nats-server-v2.10.7-linux-amd64.tar.gz
+  cp nats-server-v2.10.7-linux-amd64/nats-server /usr/local/bin/
+  
+  # Create NATS systemd service
+  cat > /etc/systemd/system/nats.service << 'EOL'
+  [Unit]
+  Description=NATS Server
+  After=network.target
+
+  [Service]
+  ExecStart=/usr/local/bin/nats-server -js -m 8222
+  Restart=always
+  User=root
+
+  [Install]
+  WantedBy=multi-user.target
+  EOL
+
+  # Start NATS service
+  systemctl daemon-reload
+  systemctl enable nats
+  systemctl start nats
+
+  # Set timezone
   timedatectl set-timezone Europe/Vienna
-  until sudo docker info; do sleep 5; done  # Warten, bis Docker verfügbar ist
-  sudo docker run -d --name nats -p 4222:4222 -e NATS_URI=nats://nats:4222 nats:latest
 EOF
   iam_instance_profile = "LabInstanceProfile"
 
