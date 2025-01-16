@@ -88,42 +88,55 @@ def process_frames_process(
                         device=device,
                         verbose=False,
                     )
-
-                    # Process detections in parallel
-                    futures = []
-                    for frame, timestamp, result in zip(
-                        batch_frames, batch_timestamps, results
-                    ):
-                        future = thread_pool.submit(
-                            process_detections,
-                            frame,
-                            result,
-                            person_tracker,
-                            cross_camera_tracker,
-                            camera_id,
-                            timestamp,
+                except RuntimeError as e:
+                    if "torchvision::nms" in str(e):
+                        logger.error("NMS error on CUDA. Falling back to CPU.")
+                        model.to("cpu")
+                        results = model.track(
+                            source=batch_frames,
+                            conf=0.5,
+                            iou=0.7,
+                            persist=True,
+                            tracker="bytetrack.yaml",
+                            device="cpu",
+                            verbose=False,
                         )
-                        futures.append((future, frame))
+                    else:
+                        raise
 
-                    # Handle processed results
-                    for future, frame in futures:
-                        try:
-                            processed_frame = future.result(timeout=0.1)
-                            if processed_frame is not None:
-                                # Compress frame for output
-                                _, buffer = cv2.imencode(
-                                    ".jpg",
-                                    processed_frame,
-                                    [cv2.IMWRITE_JPEG_QUALITY, 85],
-                                )
-                                frame_bytes = buffer.tobytes()
+                # Process detections in parallel
+                futures = []
+                for frame, timestamp, result in zip(
+                    batch_frames, batch_timestamps, results
+                ):
+                    future = thread_pool.submit(
+                        process_detections,
+                        frame,
+                        result,
+                        person_tracker,
+                        cross_camera_tracker,
+                        camera_id,
+                        timestamp,
+                    )
+                    futures.append((future, frame))
 
-                                if not output_queue.full():
-                                    output_queue.put_nowait(frame_bytes)
-                        except Exception as e:
-                            logger.error(f"Error processing detection: {e}")
-                except Exception as e:
-                    logger.error(f"Error processing batch: {e}")
+                # Handle processed results
+                for future, frame in futures:
+                    try:
+                        processed_frame = future.result(timeout=0.1)
+                        if processed_frame is not None:
+                            # Compress frame for output
+                            _, buffer = cv2.imencode(
+                                ".jpg",
+                                processed_frame,
+                                [cv2.IMWRITE_JPEG_QUALITY, 85],
+                            )
+                            frame_bytes = buffer.tobytes()
+
+                            if not output_queue.full():
+                                output_queue.put_nowait(frame_bytes)
+                    except Exception as e:
+                        logger.error(f"Error processing detection: {e}")
 
                 batch_frames = []
                 batch_timestamps = []
