@@ -203,23 +203,24 @@ The system requires significant parallel processing capabilities to handle multi
 
 \section{Evaluation}
 \label{sec:evaluation}
+Sadly this section is still incomplete and will be updated in the final report.
 Our evaluation focuses on three key aspects:
 
 \begin{itemize}
       \item \textbf{Processing Performance:} 
             \begin{itemize}
-                  \item YOLOv8n achieves real-time detection ($<$15 FPS) on modern CPUs
-                  \item Hardware acceleration provides improved performance on GPUs and Apple Silicon
-                  \item Frame skipping reduces CPU load while maintaining detection accuracy
+                  \item Successfully processed multiple video streams concurrently(6 cameras + 1 Webcam), but at this but the frame rate is not optimal.
+                  \item Detect new people in less than 2 seconds  
             \end{itemize}
       \item \textbf{Scalability:}
             \begin{itemize}
-                  \item Successfully tested with simultaneous camera streams
-                  \item Efficient resource utilization through multiprocessing
+                  \item Connecting additional cameras should be straightforward
+                  \item The Nats messaging system allows for easy scaling of the system
             \end{itemize}
       \item \textbf{Reliability:}
             \begin{itemize}
-                  \item DoTo
+                  \item Automatic stream recovery and reconnection
+                  \item Start scripts for easy deployment on new devices
             \end{itemize}
 \end{itemize}
 
