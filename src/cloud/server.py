@@ -275,7 +275,7 @@ class Server:
 
             # Create a new task for face comparison
             task = asyncio.create_task(
-                self.compare_faces(company_id, camera_id, face_id, track_id, msg)
+                self.compare_faces(company_id, camera_id, face_id, track_id)
             )
             self.tasks.append(task)
 
