@@ -29,7 +29,7 @@ class SimulatedCamera:
         self.edge_server_url = None
         self.rtsp_url = None
         self.is_running = False
-        self.frame_rate = 1
+        self.frame_rate = 5
         self.frame_width = 640*2
         self.frame_height = 480*2
         self.os_type = platform.system().lower()
@@ -101,7 +101,6 @@ class SimulatedCamera:
                 "-stream_loop", "-1",
                 "-i", video_path,
                 "-r", "1",  
-                "-vf", "fps=1",  
             ]
 
     def get_ffmpeg_output_args(self, rtsp_url: str) -> List[str]:
@@ -122,8 +121,8 @@ class SimulatedCamera:
                     "-zerolatency", "1",
                     "-b:v", "2M",  # Reduce bitrate
                     "-maxrate", "2M",
-                    "-bufsize", "4M",
-                    "-g", "30",
+                    "-bufsize", "2M",
+                    "-g", "5",
                 ]
             except Exception:
                 encoder_args = self._get_cpu_encoder_args()
@@ -149,7 +148,7 @@ class SimulatedCamera:
             "-b:v", "2M",
             "-maxrate", "2M",
             "-bufsize", "2M",
-            "-g", "30",
+            "-g", "5",
         ]
 
     async def start_streaming(self, video_path: str = "", stop_event: Optional[asyncio.Event] = None):

@@ -35,7 +35,7 @@ EOF
   }
 
   # Then initialize and configure the server
-  provisioner "remote-exec" {
+provisioner "remote-exec" {
     inline = [
       "ls -la /home/ec2-user/",
       "python3 -m venv /home/ec2-user/venv",
@@ -43,8 +43,8 @@ EOF
       "pip3 install --upgrade pip wheel setuptools",
       "pip3 install -r /home/ec2-user/requirements.txt",
       "echo 'NATS_URL=nats://${aws_instance.nats_instance.public_ip}:4222' > /home/ec2-user/.env",
-      "echo 'BUCKET_NAME=${aws_s3_bucket.theobservatory.id}' >> /home/ec2-user/.env",
       "echo 'REGION=${var.region}' >> /home/ec2-user/.env",
+      "echo 'BUCKET_NAME=${var.bucket_name}' >> /home/ec2-user/.env", 
       "sudo chown -R ec2-user:ec2-user /home/ec2-user/",
       "sudo chmod 600 /home/ec2-user/.env",
       "sudo bash -c 'cat > /etc/systemd/system/cloud-server.service << EOL\n[Unit]\nDescription=Cloud Server\nAfter=network.target\n\n[Service]\nType=simple\nUser=ec2-user\nWorkingDirectory=/home/ec2-user\nEnvironmentFile=/home/ec2-user/.env\nEnvironment=PATH=/home/ec2-user/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin\nExecStart=/home/ec2-user/venv/bin/python3 /home/ec2-user/server.py\nRestart=always\nRestartSec=3\n\n[Install]\nWantedBy=multi-user.target\nEOL'",

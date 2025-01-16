@@ -134,7 +134,7 @@ class OptimizedPersonTracker:
                     gray_roi,
                     scaleFactor=1.1,
                     minNeighbors=4,
-                    minSize=(30, 30),
+                    minSize=(10, 10),
                     flags=cv2.CASCADE_SCALE_IMAGE,
                 )
             except cv2.error as e:
