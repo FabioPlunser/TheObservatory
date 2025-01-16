@@ -38,7 +38,7 @@ class NatsClient:
         if self.nc is None or not self._connected:
             logger.error("NATS client not initialized")
             return
-        await self.nc.publish(subject, data)
+        await self.nc.publish(subject, json.dumps(data).encode())
 
     async def send_message_with_reply(self, subject, data):
         if self.nc is None or not self._connected:
