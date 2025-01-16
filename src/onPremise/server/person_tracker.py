@@ -21,7 +21,7 @@ from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from logging_config import setup_logger
-from nats_client import SharedNatsClient, Commands
+from nats_client import SharedNatsClient, NatsClient, Commands
 from reid_implementation import OptimizedCrossCameraTracker
 from datetime import datetime
 from database import Database
@@ -59,10 +59,10 @@ class OptimizedPersonTracker:
         self.thread_pool = ThreadPoolExecutor(max_workers=4)
 
         # Face detection queue and processing thread
-        self.face_queue = queue.Queue(maxsize=20)
-        self.face_processing = True
-        self.face_thread = threading.Thread(target=self._process_face_queue)
-        self.face_thread.daemon = True
+        # self.face_queue = queue.Queue(maxsize=20)
+        # self.face_processing = True
+        # self.face_thread = threading.Thread(target=self._process_face_queue
+        # self.face_thread.daemon = True
 
         # Remove the face detector initialization from __init__
         self.mp_face_detection = mp.solutions.face_detection
@@ -75,7 +75,7 @@ class OptimizedPersonTracker:
         self.processing_times = deque(maxlen=100)
 
         # Start face processing thread
-        self.face_thread.start()
+        # self.face_thread.start()
 
         self.cross_camera_tracker: Optional[OptimizedCrossCameraTracker] = None
 
@@ -101,135 +101,142 @@ class OptimizedPersonTracker:
             self.color_map[track_id] = self._generate_color(track_id)
         return self.color_map[track_id]
 
-    def _process_face_queue(self):
-        """Background thread for processing face detection queue"""
-        import os
+    # def _process_face_queue(self):
+    #     """Background thread for processing face detection queue"""
+    #     import os
 
-        os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-        while self.face_processing:
-            try:
-                track_id, frame, bbox = self.face_queue.get(timeout=0.1)
+    #     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    #     while self.face_processing:
+    #         try:
+    #             track_id, frame, bbox = self.face_queue.get(timeout=0.1)
 
-                current_time = time.time()
-                if track_id in self.face_cache:
-                    cached_face, cache_time = self.face_cache[track_id]
-                    if current_time - cache_time < self.cache_timeout:
-                        continue
+    #             current_time = time.time()
+    #             if track_id in self.face_cache:
+    #                 cached_face, cache_time = self.face_cache[track_id]
+    #                 if current_time - cache_time < self.cache_timeout:
+    #                     continue
 
-                face_img = self._extract_face(frame, bbox)
+    #             face_img = self._extract_face(frame, bbox)
 
-                if face_img is not None:
-                    if track_id in self.tracked_persons:
-                        self.tracked_persons[track_id].face_image = face_img
-                        self.face_cache[track_id] = (face_img, current_time)
-                        self.face_queue.task_done()
-                else:
-                    logger.error(f"Face extraction failed for track {track_id}")
-                    self.face_queue.task_done()
+    #             if face_img is not None:
+    #                 if track_id in self.tracked_persons:
+    #                     self.tracked_persons[track_id].face_image = face_img
+    #                     self.face_cache[track_id] = (face_img, current_time)
+    #                     self.face_queue.task_done()
+    #             else:
+    #                 logger.error(f"Face extraction failed for track {track_id}")
+    #                 self.face_queue.task_done()
 
-            except queue.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"Error in face processing: {e}")
+    #         except queue.Empty:
+    #             continue
+    #         except Exception as e:
+    #             logger.error(f"Error in face processing: {e}")
 
-    def _extract_face(
-        self, frame: np.ndarray, bbox: np.ndarray
-    ) -> Optional[np.ndarray]:
-        """Extract face from person bounding box using MediaPipe"""
-        import os
+    # def _extract_face(
+    #     self, frame: np.ndarray, bbox: np.ndarray
+    # ) -> Optional[np.ndarray]:
+    #     """Extract face from person bounding box using MediaPipe"""
+    #     import os
 
-        os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-        try:
+    #     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    #     try:
 
-            x, y, w, h = map(int, bbox)
+    #         x, y, w, h = map(int, bbox)
 
-            # Validate input frame
-            if (
-                frame is None
-                or frame.size == 0
-                or not (0 <= x < frame.shape[1] and 0 <= y < frame.shape[0])
-            ):
-                logger.error("Invalid input frame")
-                return None
+    #         # Validate input frame
+    #         if (
+    #             frame is None
+    #             or frame.size == 0
+    #             or not (0 <= x < frame.shape[1] and 0 <= y < frame.shape[0])
+    #         ):
+    #             logger.error("Invalid input frame")
+    #             return None
 
-            # Add padding with boundary checks
-            pad_x = int(w * 0.1)
-            pad_y = int(h * 0.1)
-            x1 = max(0, x - pad_x)
-            y1 = max(0, y - pad_y)
-            x2 = min(frame.shape[1], x + w + pad_x)
-            y2 = min(frame.shape[0], y + h + pad_y)
+    #         # Add padding with boundary checks
+    #         frame = cv2.GaussianBlur(frame, (5, 5), 0)
+    #         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    #         frame = cv2.cvtColor(cv2.equalizeHist(gray), cv2.COLOR_GRAY2BGR)
 
-            person_roi = frame[y1:y2, x1:x2]
-            if (
-                person_roi.size == 0
-                or person_roi.shape[0] <= 0
-                or person_roi.shape[1] <= 0
-            ):
-                logger.error(
-                    f"ROI is empty or invalid: {person_roi.shape if person_roi is not None else None}"
-                )
-                return None
+    #         pad_x = int(w * 0.25)
+    #         pad_y = int(h * 0.25)
+    #         x1 = max(0, x - pad_x)
+    #         y1 = max(0, y - pad_y)
+    #         x2 = min(frame.shape[1], x + w + pad_x)
+    #         y2 = min(frame.shape[0], y + h + pad_y)
 
-            # Create a new detector instance for each image
-            with self.mp_face_detection.FaceDetection(
-                model_selection=1, min_detection_confidence=0.5
-            ) as face_detector:
-                # Convert BGR to RGB
-                rgb_roi = cv2.cvtColor(person_roi, cv2.COLOR_BGR2RGB)
+    #         person_roi = frame[y1:y2, x1:x2]
+    #         if (
+    #             person_roi.size == 0
+    #             or person_roi.shape[0] <= 0
+    #             or person_roi.shape[1] <= 0
+    #         ):
+    #             logger.error(
+    #                 f"ROI is empty or invalid: {person_roi.shape if person_roi is not None else None}"
+    #             )
+    #             return None
 
-                # Ensure the image is contiguous
-                if not rgb_roi.flags["C_CONTIGUOUS"]:
-                    rgb_roi = np.ascontiguousarray(rgb_roi)
+    #         # Create a new detector instance for each image
+    #         with self.mp_face_detection.FaceDetection(
+    #             model_selection=0,
+    #             min_detection_confidence=0.4,
+    #         ) as face_detector:
+    #             # Convert BGR to RGB
+    #             rgb_roi = cv2.cvtColor(person_roi, cv2.COLOR_BGR2RGB)
 
-                # Process the image
-                results = face_detector.process(rgb_roi)
+    #             # Ensure the image is contiguous
+    #             if not rgb_roi.flags["C_CONTIGUOUS"]:
+    #                 rgb_roi = np.ascontiguousarray(rgb_roi)
 
-                if not results or not results.detections:
-                    return None
+    #             # Process the image
+    #             results = face_detector.process(rgb_roi)
 
-                # Get the first detected face
-                detection = results.detections[0]
-                bbox_rel = detection.location_data.relative_bounding_box
+    #             if not results or not results.detections:
+    #                 return None
 
-                # Convert relative coordinates to absolute
-                roi_h, roi_w = rgb_roi.shape[:2]
-                fx = int(bbox_rel.xmin * roi_w)
-                fy = int(bbox_rel.ymin * roi_h)
-                fw = int(bbox_rel.width * roi_w)
-                fh = int(bbox_rel.height * roi_h)
+    #             # Get the first detected face
+    #             detection = results.detections[0]
+    #             bbox_rel = detection.location_data.relative_bounding_box
 
-                # Boundary checks
-                fx = max(0, fx)
-                fy = max(0, fy)
-                fw = min(roi_w - fx, fw)
-                fh = min(roi_h - fy, fh)
+    #             # Convert relative coordinates to absolute
+    #             roi_h, roi_w = rgb_roi.shape[:2]
+    #             fx = int(bbox_rel.xmin * roi_w)
+    #             fy = int(bbox_rel.ymin * roi_h)
+    #             fw = int(bbox_rel.width * roi_w)
+    #             fh = int(bbox_rel.height * roi_h)
 
-                if fw <= 0 or fh <= 0:
-                    return None
+    #             # Boundary checks
+    #             fx = max(0, fx)
+    #             fy = max(0, fy)
+    #             fw = min(roi_w - fx, fw)
+    #             fh = min(roi_h - fy, fh)
 
-                # Extract face region
-                face_img = rgb_roi[fy : fy + fh, fx : fx + fw]
+    #             if fw <= 0 or fh <= 0:
+    #                 return None
 
-                # Convert back to BGR
-                face_img = cv2.cvtColor(face_img, cv2.COLOR_RGB2BGR)
+    #             # Extract face region
+    #             face_img = rgb_roi[fy : fy + fh, fx : fx + fw]
 
-                # Resize face image
-                try:
-                    if face_img.size > 0:
-                        face_img = cv2.resize(face_img, (160, 160))
-                        return face_img
-                except cv2.error as e:
-                    logger.error(f"OpenCV resize error: {e}")
-                    return None
+    #             # Convert back to BGR
+    #             face_img = cv2.cvtColor(face_img, cv2.COLOR_RGB2BGR)
 
-        except Exception as e:
-            logger.error(f"Error extracting face: {e}")
-            import traceback
+    #             # Resize face image
+    #             try:
+    #                 if face_img.size > 0:
+    #                     face_img = cv2.resize(
+    #                         face_img, (160, 160), interpolation=cv2.INTER_CUBIC
+    #                     )
+    #                     return face_img
+    #             except cv2.error as e:
+    #                 logger.error(f"OpenCV resize error: {e}")
+    #                 return None
 
-            logger.error(traceback.format_exc())
+    #     except Exception as e:
+    #         logger.error(f"Error extracting face: {e}")
+    #         import traceback
 
-        return None
+    #         logger.error(traceback.format_exc())
+
+    #     return None
 
     def update(
         self, frame: np.ndarray, yolo_results, current_time: Optional[float] = None
@@ -268,15 +275,6 @@ class OptimizedPersonTracker:
                         person = self.tracked_persons[track_id]
                         person.update_position(bbox, current_time)
 
-                        if (
-                            person.face_image is None
-                            or person.recognition_status == "pending"
-                        ):
-                            try:
-                                self.face_queue.put_nowait((track_id, frame, bbox))
-                            except queue.Full:
-                                pass
-
                         updated_tracks.append(person)
                     else:
                         color = self._get_color(track_id)
@@ -289,24 +287,11 @@ class OptimizedPersonTracker:
                         self.tracked_persons[track_id] = person
                         new_tracks.append(person)
 
-                        try:
-                            self.face_queue.put_nowait((track_id, frame, bbox))
-                        except queue.Full:
-                            pass
-
             self._cleanup_stale_tracks(current_time)
             self.processing_times.append(time.time() - start_time)
 
             for new_track in new_tracks:
-                while self.face_queue.qsize() > 0:
-                    logger.info("Waiting for face queue to clear")
-                    time.sleep(0.1)
-
-                asyncio.run(
-                    self._handle_face_recognition(
-                        new_track, self.tracked_persons[new_track.track_id].face_image
-                    )
-                )
+                asyncio.run(self._handle_face_recognition(new_track, frame))
 
             # After creating or updating person tracks, gather person crops
             person_crops = []
@@ -361,8 +346,8 @@ class OptimizedPersonTracker:
     def cleanup(self):
         """Clean up resources"""
         self.face_processing = False
-        if self.face_thread.is_alive():
-            self.face_thread.join(timeout=1)
+        # if self.face_thread.is_alive():
+        #     self.face_thread.join(timeout=1)
         self.thread_pool.shutdown(wait=False)
         self.tracked_persons.clear()
         self.face_cache.clear()
@@ -403,11 +388,11 @@ class OptimizedPersonTracker:
             )
 
             # Get presigned URL
-            nats_client = SharedNatsClient.get_instance()
-            if not nats_client:
-                logger.error("Reid handle face recogntion nats client to avaiable")
-                nats_url = await self.db.get_cloud_url()
-                nats_client = await SharedNatsClient.initialize(nats_url)
+            logger.error("Reid handle face recogntion nats client to avaiable")
+            nats_url = await self.db.get_cloud_url()
+            nats_client = NatsClient(nats_url)
+            await nats_client.connect()
+
             try:
                 response = await nats_client.send_message_with_reply(
                     Commands.GET_PRESIGNED_UPLOAD_UNKNOWN_FACE_URL.value,

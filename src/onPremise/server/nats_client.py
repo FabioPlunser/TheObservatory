@@ -48,7 +48,7 @@ class NatsClient:
             # Convert data to JSON and encode
             encoded_data = json.dumps(data).encode()
             # Wait max 5 seconds for response
-            response = await self.nc.request(subject, encoded_data, timeout=30)
+            response = await self.nc.request(subject, encoded_data)
             # Decode response
             return json.loads(response.data.decode())
         except Exception as e:
