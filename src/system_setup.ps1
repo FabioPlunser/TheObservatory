@@ -400,7 +400,7 @@ function Start-RTSPServer {
     }
 
     try {
-        docker run -d --name rtsp -p 8554:8554 aler9/rtsp-simple-server
+        docker run -d --name rtsp -p 8555:8554 aler9/rtsp-simple-server
         Write-Host "✅ RTSP server started successfully"
     }
     catch {

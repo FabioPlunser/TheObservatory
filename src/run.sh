@@ -2,12 +2,25 @@
 # Exit on error
 set -e
 
+# Source the subscripts
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+source "$SCRIPT_DIR/terraform_setup.sh"
+source "$SCRIPT_DIR/system_setup.sh"
+
+# Initialize global variables
+declare -a camera_pids=()
+declare -a alarm_pids=()
+server_pid=
+simulated_camera_pid=
+use_simulated_data=false
+NATS_URL=
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Animated loading function with better process handling
+# Animated loading function
 animate_loading() {
     local message=$1
     local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
@@ -20,237 +33,92 @@ animate_loading() {
     done
 }
 
-cleanup_spinner() {
-    kill $spinner_pid 2>/dev/null || true
-    wait $spinner_pid 2>/dev/null || true
-    printf "\r%s\n" "$1"
-}
-
 cleanup() {
+    local exit_code=$?
     echo "🛑 Stopping all processes..."
-    # Kill any remaining spinner
-    kill $spinner_pid 2>/dev/null || true
-    # Kill camera processes
+    
+    # Function to gracefully stop a process
+    stop_process() {
+        local pid=$1
+        if [ -n "$pid" ] && kill -0 $pid 2>/dev/null; then
+            echo "Stopping process $pid..."
+            kill -TERM $pid 2>/dev/null || kill -KILL $pid 2>/dev/null
+            sleep 1
+        fi
+    }
+    
+    # Stop camera processes
     for pid in "${camera_pids[@]}"; do
-        kill $pid 2>/dev/null || true
+        stop_process "$pid"
     done
-    # Kill alarm processes
+    
+    # Stop alarm processes
     for pid in "${alarm_pids[@]}"; do
-        kill $pid 2>/dev/null || true
+        stop_process "$pid"
     done
-    # Kill simulated camera process group
-    if [ "$use_simulated_data" = true ]; then
-        # Kill the entire process group
-        kill -- -$simulated_camera_pid 2>/dev/null || true
+    
+    # Stop simulated camera process group
+    if [ "$use_simulated_data" = true ] && [ -n "$simulated_camera_pid" ]; then
+        stop_process "$simulated_camera_pid"
     fi
-    # Kill server
-    kill $server_pid 2>/dev/null || true
+    
+    # Stop server more gracefully
+    if [ -n "$server_pid" ]; then
+        echo "Stopping server (PID: $server_pid)..."
+        kill -TERM $server_pid 2>/dev/null
+        sleep 2
+        # If still running, force kill
+        if kill -0 $server_pid 2>/dev/null; then
+            kill -KILL $server_pid 2>/dev/null
+        fi
+    fi
+    
+    # Stop any remaining Python processes
+    pkill -f "python.*onPremise/server/main.py" 2>/dev/null || true
+    
+    # Clean up Docker containers
+    if command -v docker >/dev/null 2>&1; then
+        docker rm -f rtsp >/dev/null 2>&1 || true
+    fi
+    
+    # Only clean up files if exiting successfully
+    if [ $exit_code -eq 0 ]; then
+        echo "🧹 Cleaning up files..."
+        rm -f db.db server_output.log server_error.log
+    else
+        echo "⚠️ Exit code: $exit_code - preserving log files for inspection"
+        echo "📝 Check server_output.log and server_error.log for details"
+    fi
     
     echo "👋 Cleanup complete"
-    rm -rf db.db 
-    exit 0
+    exit $exit_code
 }
 
-trap cleanup SIGINT SIGTERM
+# Set up error handling
+set -E
+trap 'handle_error $? $LINENO' ERR
+
+handle_error() {
+    local exit_code=$1
+    local line_number=$2
+    echo "❌ Error on line $line_number: Command exited with status $exit_code"
+    cleanup
+}
+
+# Register the cleanup function for normal exit and signals
+trap cleanup EXIT SIGINT SIGTERM
+
+# Set up cleanup trap
+trap cleanup SIGINT SIGTERM EXIT
 
 echo "🚀 Starting setup script..."
 
-# Prompt the user to launch or destroy the Terraform server
+# Handle Terraform operations
 read -p "Do you want to launch, destroy, or do nothing with the Terraform server? ([l]aunch/[d]estroy/[n]othing): " action
-if [ "$action" = "l" ]; then
+handle_terraform "$action"
 
-    # Check if AWS credentials file exists
-    aws_credentials_path="$HOME/.aws/credentials"
-    if [ ! -f "$aws_credentials_path" ]; then
-        echo "AWS credentials file not found. Prompting for credentials..."
-        read -p "Enter your AWS Access Key: " aws_access_key
-        read -p "Enter your AWS Secret Key: " aws_secret_key
-        read -p "Enter your AWS Region (e.g., us-east-1): " aws_region
-
-        # Configure AWS CLI with the provided credentials
-        aws configure set aws_access_key_id $aws_access_key
-        aws configure set aws_secret_access_key $aws_secret_key
-        aws configure set region $aws_region
-    else
-        echo "AWS credentials file found. Checking for credentials..."
-
-        # Check if the credentials are present
-        if ! grep -q "aws_access_key_id" "$aws_credentials_path" || ! grep -q "aws_secret_access_key" "$aws_credentials_path"; then
-            echo "AWS credentials not found in the file. Prompting for credentials..."
-            read -p "Enter your AWS Access Key: " aws_access_key
-            read -p "Enter your AWS Secret Key: " aws_secret_key
-            read -p "Enter your AWS Region (e.g., us-east-1): " aws_region
-
-            # Configure AWS CLI with the provided credentials
-            aws configure set aws_access_key_id $aws_access_key
-            aws configure set aws_secret_access_key $aws_secret_key
-            aws configure set region $aws_region
-        else
-            echo "AWS credentials found in the file."
-        fi
-    fi
-
-    # Check if the key pair exists
-    key_pair_name="theObservatory"
-    key_pair_path="$HOME/.ssh/theObservatory.pem"
-    if [ ! -f "$key_pair_path" ]; then
-        echo "Key pair file '$key_pair_path' not found. Checking if key pair exists in AWS..."
-        if aws ec2 describe-key-pairs --key-names $key_pair_name 2>&1 | grep -q $key_pair_name; then
-            echo "Key pair '$key_pair_name' exists in AWS but the local file is missing."
-            read -p "The key pair exists in AWS but the local file is missing. Do you want to create a new key pair? (y/n): " create_new_key
-            if [ "$create_new_key" = "y" ]; then
-                echo "Deleting existing key pair in AWS and creating a new one..."
-                aws ec2 delete-key-pair --key-name $key_pair_name
-                aws ec2 create-key-pair --key-name $key_pair_name --query "KeyMaterial" --output text > $key_pair_path
-                chmod 400 $key_pair_path
-                echo "New key pair created and saved to $key_pair_path"
-            else
-                echo "Please ensure you have the correct key pair file at '$key_pair_path'."
-                exit 1
-            fi
-        else
-            echo "Key pair '$key_pair_name' not found in AWS. Creating key pair..."
-            aws ec2 create-key-pair --key-name $key_pair_name --query "KeyMaterial" --output text > $key_pair_path
-            chmod 400 $key_pair_path
-            echo "Key pair created and saved to $key_pair_path"
-        fi
-    else
-        echo "Key pair file '$key_pair_path' found."
-        chmod 400 $key_pair_path  # Ensure correct permissions
-    fi
-
-    # Verify the key file permissions
-    ls -l $key_pair_path
-
-    echo "🌍 Initializing Terraform..."
-    pushd terraform
-    terraform init
-
-    echo "🚀 Applying Terraform configuration..."
-    terraform apply -var "private_pem_key=$key_pair_path" -auto-approve
-
-
-elif [ "$action" = "d" ]; then
-    echo "🛑 Destroying Terraform-managed infrastructure..."
-    pushd terraform
-    terraform destroy -var "private_pem_key=$key_pair_path" -auto-approve
-    popd
-    echo "✅ Terraform-managed infrastructure destroyed."
-    read -p "Do you want to continue with the setup script? (y/n): " close
-    if [ "$close" = "n" ]; then
-        exit
-    fi
-
-elif [ "$action" = "n" ]; then
-    echo "Continuing with the setup script..."
-else
-    echo "🚫 Invalid action. Please enter 'l', 'd', or 'n'."
-    exit 1
-fi
-
-# Create and activate Python virtual environment
-if [ ! -d "venv" ]; then
-    echo "🐍 Creating Python virtual environment..."
-    python3.12 -m venv venv >/dev/null 2>&1
-fi
-
-# Activate virtual environment
-echo "🔄 Activating virtual environment..."
-source venv/bin/activate
-
-# Calculate checksum of requirements files
-requirements_files=("onPremise/server/requirements.txt" "onPremise/devices/emulated/requirements.txt" "cloud/requirements.txt")
-checksum=$(cat "${requirements_files[@]}" | sha256sum | awk '{print $1}')
-checksum_file="requirements_checksum.txt"
-
-# Check if checksum has changed or if virtual environment does not exist
-run_pip_install=false
-if [ ! -f "$checksum_file" ]; then
-    run_pip_install=true
-else
-    stored_checksum=$(cat "$checksum_file" | tr -d '[:space:]')
-    if [ "$checksum" != "$stored_checksum" ]; then
-        run_pip_install=true
-    fi
-fi
-
-# Install Python requirements if needed
-if [ "$run_pip_install" = true ]; then
-    echo "📦 Installing required Python packages..."
-    pip install -r onPremise/server/requirements.txt
-    pip install -r onPremise/devices/emulated/requirements.txt
-    pip install -r cloud/requirements.txt
-    echo -n "$checksum" > "$checksum_file"
-else
-    echo "📦 Python packages are already up-to-date."
-fi
-
-# Get number of devices to emulate
-read -p "Enter number of cameras to emulate: " num_cameras
-read -p "Enter number of alarms to emulate: " num_alarms
-read -p "Do you want to use simulated data? (y/n): " use_simulated_data
-if [ "$use_simulated_data" = "y" ]; then
-    use_simulated_data=true
-else
-    use_simulated_data=false
-fi
-
-# Start frontend setup
-animate_loading "Setting up frontend..." &
-spinner_pid=$!
-
-# Install frontend dependencies
-if command_exists bun; then
-    (cd onPremise/server/website && bun install && bun run build) >/dev/null 2>&1 && \
-    cleanup_spinner "✅ Frontend setup complete!" || {
-        cleanup_spinner "❌ Frontend setup failed!"
-        exit 1
-    }
-elif command_exists npm; then
-    (cd onPremise/server/website && npm install && npm run build) >/dev/null 2>&1 && \
-    cleanup_spinner "✅ Frontend setup complete!" || {
-        cleanup_spinner "❌ Frontend setup failed!"
-        exit 1
-    }
-else
-    cleanup_spinner "❌ Neither bun nor npm found. Please install one of them."
-    exit 1
-fi
-
-# Start the server in the background
-echo "🖥️ Starting edge server..."
-python onPremise/server/main.py &
-server_pid=$!
-
-# Wait for server to start
-echo "⏳ Waiting for server to initialize..."
-sleep 5
-
-# Start emulated cameras
-echo "📸 Starting $num_cameras camera(s)..."
-camera_pids=()
-for (( i=1; i<=$num_cameras; i++ ))
-do
-    python onPremise/devices/emulated/camera.py &
-    camera_pids+=($!)
-done
-
-# Start simulated cameras
-if [ "$use_simulated_data" = true ]; then
-    echo "📸 Starting simulated cameras ..."
-    # Start in a new process group
-    setsid python onPremise/devices/emulated/simulatedCamera.py &
-    simulated_camera_pid=$!
-fi
-
-# Start emulated alarms
-echo "🚨 Starting $num_alarms alarm(s)..."
-alarm_pids=()
-for (( i=1; i<=$num_alarms; i++ ))
-do
-    python onPremise/devices/emulated/alarm.py &
-    alarm_pids+=($!)
-done
+# Run system setup
+setup_system
 
 # Keep script running
 echo "✅ System is running. Press Ctrl+C to stop all processes."

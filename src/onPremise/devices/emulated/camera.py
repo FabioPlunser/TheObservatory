@@ -109,9 +109,7 @@ class Camera:
                 "-f",
                 "v4l2",
                 "-input_format",
-                "mjpeg",
-                "-ts",
-                "monotonic",
+                "yuyv422",
                 "-i",
                 "/dev/video0",
             ]

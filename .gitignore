@@ -41,6 +41,7 @@ __pycache__/
 src/onPremise/server/__pycache__/
 venv
 venvWin
+torchreid
 
 
 .DS_Store
