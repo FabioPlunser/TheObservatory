@@ -9,7 +9,6 @@ function Handle-Terraform {
     )
 
     if ($action -eq "l") {
-        Setup-AWS-Credentials
         Setup-SSH-Keys
         Apply-Terraform
     }
@@ -46,34 +45,47 @@ function Handle-Terraform {
     }
 }
 
+function Test-AWSCredentials {
+    try {
+        # First test basic AWS CLI access
+        $null = aws sts get-caller-identity 2>&1
+        
+        # Then specifically check for token expiration using terraform
+        Push-Location "terraform"
+        $result = terraform providers 2>&1
+        Pop-Location
+        
+        if ($result -match "ExpiredToken") {
+            Write-Host "❌ Token has expired"
+            return $false
+        }
+        
+        return $true
+    }
+    catch {
+        Write-Host "❌ AWS CLI access failed"
+        return $false
+    }
+}
+
 function Setup-AWS-Credentials {
     $aws_credentials_path = "$env:USERPROFILE\.aws\credentials"
-    $aws_credentials_exist = Test-Path -Path $aws_credentials_path
-
-    if (-Not $aws_credentials_exist) {
-        Write-Host "AWS credentials file not found. Prompting for credentials..."
-        $aws_access_key = Read-Host "Enter your AWS Access Key"
-        $aws_secret_key = Read-Host "Enter your AWS Secret Key"
-        $aws_region = Read-Host "Enter your AWS Region (e.g., us-east-1)"
-
-        aws configure set aws_access_key_id $aws_access_key
-        aws configure set aws_secret_access_key $aws_secret_key
-        aws configure set region $aws_region
+    
+    if (-Not (Test-Path -Path $aws_credentials_path)) {
+        Write-Host "❌ AWS credentials file not found at: $aws_credentials_path"
+        Write-Host "Please configure your AWS credentials and try again."
+        exit 1
     }
-    else {
-        Write-Host "AWS credentials file found. Checking for credentials..."
-        $credentials_content = Get-Content -Path $aws_credentials_path -Raw
-        if ($credentials_content -notmatch "aws_access_key_id" -or $credentials_content -notmatch "aws_secret_access_key") {
-            Write-Host "AWS credentials not found in the file. Prompting for credentials..."
-            $aws_access_key = Read-Host "Enter your AWS Access Key"
-            $aws_secret_key = Read-Host "Enter your AWS Secret Key"
-            $aws_region = Read-Host "Enter your AWS Region (e.g., us-east-1)"
-
-            aws configure set aws_access_key_id $aws_access_key
-            aws configure set aws_secret_access_key $aws_secret_key
-            aws configure set region $aws_region
-        }
+    
+    if (-Not (Test-AWSCredentials)) {
+        Write-Host "❌ AWS credentials are expired or invalid."
+        Write-Host "Please update your AWS credentials at: $aws_credentials_path"
+        Write-Host "You can use 'aws configure' to set up new credentials."
+        Write-Host "Note: If you're using temporary credentials or an AWS token, make sure it hasn't expired."
+        exit 1
     }
+    
+    Write-Host "✅ AWS credentials are valid and not expired"
 }
 
 function Setup-SSH-Keys {
@@ -109,6 +121,11 @@ function Setup-SSH-Keys {
 
 function Apply-Terraform {
     Write-Host "🌍 Initializing Terraform..."
+    
+    # Check credentials before proceeding
+    Write-Host "Validating AWS credentials..."
+    Setup-AWS-Credentials
+    
     Push-Location "terraform"
     
     if (-not (Test-Path -Path $script:key_pair_path)) {
@@ -120,15 +137,19 @@ function Apply-Terraform {
 
     # Get absolute path to the key file
     $absolute_key_path = Resolve-Path $script:key_pair_path
-
-    Write-Host "🚀 Applying Terraform configuration..."
-    terraform init
-
-    # Fix path format for terraform
     $terraform_key_path = $absolute_key_path.Path.Replace('\', '/')
     
     Write-Host "Using SSH key: $terraform_key_path"
-    terraform apply -var "private_pem_key=$terraform_key_path" -auto-approve
+    
+    try {
+        terraform init
+        terraform apply -var "private_pem_key=$terraform_key_path" -auto-approve
+    }
+    catch {
+        Write-Host "❌ Failed to apply Terraform configuration. Please check your AWS credentials and try again."
+        Pop-Location
+        exit 1
+    }
 
     # Get NATS server URL from Terraform output
     $nats_ip = terraform output -raw nats_instance_public_ip
@@ -155,6 +176,10 @@ function Destroy-Terraform {
     Write-Host "🛑 Destroying Terraform-managed infrastructure..."
     Push-Location "terraform"
     
+    # Check credentials before proceeding
+    Write-Host "Validating AWS credentials..."
+    Setup-AWS-Credentials
+
     if (-not (Test-Path -Path $script:key_pair_path)) {
         Write-Host "❌ SSH key not found at: $script:key_pair_path"
         Write-Host "Nothing to destroy - no valid SSH key found"
@@ -165,7 +190,15 @@ function Destroy-Terraform {
     $absolute_key_path = Resolve-Path $script:key_pair_path
     $terraform_key_path = $absolute_key_path.Path.Replace('\', '/')
     
-    terraform destroy -var "private_pem_key=$terraform_key_path" -auto-approve
+    try {
+        terraform destroy -var "private_pem_key=$terraform_key_path" -auto-approve
+    }
+    catch {
+        Write-Host "❌ Failed to destroy Terraform configuration. Please check your AWS credentials and try again."
+        Pop-Location
+        exit 1
+    }
+
     Pop-Location
     Write-Host "✅ Terraform-managed infrastructure destroyed."
 }

@@ -161,10 +161,6 @@ class SharedNatsClient:
 
         return cls._instance
 
-
-from enum import Enum
-
-
 class Commands(Enum):
     INIT_BUCKET = "INIT_BUCKET"
     GET_PRESIGNED_UPLOAD_KNOWN_FACE_URL = "GET_PRESIGNED_UPLOAD_KNOWN_FACE_URL"
