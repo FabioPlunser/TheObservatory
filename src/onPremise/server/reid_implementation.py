@@ -1,22 +1,32 @@
-from dataclasses import dataclass
 import numpy as np
+import asyncio
 import torch
-from torchreid import models
 import cv2
-from dataclasses import dataclass
-from datetime import datetime, timedelta
 import threading
-from typing import Dict, List, Optional, Tuple
-from scipy.spatial.distance import cdist
-from concurrent.futures import ThreadPoolExecutor
 import queue
 import logging
-from collections import deque
 import time
+import aiohttp
+import uuid
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 from contextlib import nullcontext
 from multiprocessing import cpu_count
 from functools import lru_cache
+from typing import Dict, List, Optional, Tuple
+from scipy.spatial.distance import cdist
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from torchreid import models
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from collections import deque
+from logging_config import setup_logger
+from database import Database
 
+setup_logger()
 logger = logging.getLogger("ReID")
 
 
@@ -32,6 +42,7 @@ class PersonFeature:
     face_id: Optional[str] = None
     recognition_status: str = "pending"
     confidence: float = 0.0
+    face_image: Optional[np.ndarray] = None
 
 
 class OptimizedCrossCameraTracker:
@@ -44,6 +55,9 @@ class OptimizedCrossCameraTracker:
         temporal_weight: float = 0.2,
         batch_size: int = 16,  # Increased batch size for better throughput
     ):
+
+        self.db = Database()
+
         # Initialize device
         self.device = self._init_device()
 
@@ -155,7 +169,7 @@ class OptimizedCrossCameraTracker:
 
         if torch.cuda.is_available():
             # Use updated autocast syntax
-            self.amp_context = torch.amp.autocast('cuda')
+            self.amp_context = torch.amp.autocast("cuda")
             torch.cuda.empty_cache()
         else:
             self.amp_context = nullcontext()
@@ -302,7 +316,9 @@ class OptimizedCrossCameraTracker:
         )
         return similarities.flatten()
 
-    def _compute_spatial_similarity(self, pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
+    def _compute_spatial_similarity(
+        self, pos1: Tuple[float, float], pos2: Tuple[float, float]
+    ) -> float:
         dist = np.linalg.norm(np.array(pos1) - np.array(pos2))
         return 1 / (1 + dist)
 
@@ -450,12 +466,16 @@ class OptimizedCrossCameraTracker:
         # Wait for features
         max_wait = 0.1
         start_wait = time.time()
+        reid_features = None
+
         while time.time() - start_wait < max_wait:
             if track_id in self.feature_cache:
                 reid_features, _ = self.feature_cache[track_id]
+                time.sleep(0.01)
                 break
             time.sleep(0.01)
-        else:
+
+        if reid_features is None:
             return
 
         # Call _match_and_update after we have features
@@ -549,7 +569,7 @@ class OptimizedCrossCameraTracker:
                 global_id = f"person_{len(self.person_features)}"
                 logger.info(f"Created new person {global_id}")
 
-                self.person_features[global_id] = PersonFeature(
+                person_feature = PersonFeature(
                     reid_features=reid_features,
                     appearance_features=[reid_features],
                     temporal_features={camera_id: current_time.timestamp()},
@@ -566,6 +586,8 @@ class OptimizedCrossCameraTracker:
                     confidence=1.0,
                 )
 
+                self.person_features[global_id] = person_feature
+
             # Update mappings
             camera_track = (camera_id, track_id)
             self.camera_to_global[camera_track] = global_id
@@ -575,25 +597,25 @@ class OptimizedCrossCameraTracker:
             logger.error(f"Error in match and update: {e}")
             return None
 
-        def get_person_info(self, global_id: str) -> Optional[PersonFeature]:
-            """Get information about a person by their global ID"""
-            return self.person_features.get(global_id)
+    def get_person_info(self, global_id: str) -> Optional[PersonFeature]:
+        """Get information about a person by their global ID"""
+        return self.person_features.get(global_id)
 
-        def _cleanup_old_features(self, current_time: datetime):
-            """Remove features that are too old"""
-            expired_ids = []
-            expired_camera_tracks = []
+    def _cleanup_old_features(self, current_time: datetime):
+        """Remove features that are too old"""
+        expired_ids = []
+        expired_camera_tracks = []
 
-            for global_id, feature_data in self.person_features.items():
-                if current_time - feature_data.last_seen > self.max_feature_age:
-                    expired_ids.append(global_id)
-                    # Find and mark associated camera tracks for removal
-                    for camera_track, g_id in self.camera_to_global.items():
-                        if g_id == global_id:
-                            expired_camera_tracks.append(camera_track)
+        for global_id, feature_data in self.person_features.items():
+            if current_time - feature_data.last_seen > self.max_feature_age:
+                expired_ids.append(global_id)
+                # Find and mark associated camera tracks for removal
+                for camera_track, g_id in self.camera_to_global.items():
+                    if g_id == global_id:
+                        expired_camera_tracks.append(camera_track)
 
-            # Remove expired entries
-            for global_id in expired_ids:
-                del self.person_features[global_id]
-            for camera_track in expired_camera_tracks:
-                del self.camera_to_global[camera_track]
+        # Remove expired entries
+        for global_id in expired_ids:
+            del self.person_features[global_id]
+        for camera_track in expired_camera_tracks:
+            del self.camera_to_global[camera_track]

@@ -196,18 +196,9 @@ class Server:
             logger.error(f"Failed to handle delete known face request: {e}")
             await msg.respond(json.dumps({"success": False, "error": str(e)}).encode())
 
-    async def execute_rekognition(self, msg):
-        """Compare one face against multiple faces"""
+    async def compare_faces(self, company_id, camera_id, face_id, track_id, msg):
+        """Separate method to handle face comparison process"""
         try:
-            data = json.loads(msg.data.decode())
-            company_id = data.get("company_id")
-            camera_id = data.get("camera_id")
-            face_id = data.get("face_id")
-            track_id = data.get("track_id")
-
-            if not all([company_id, camera_id, face_id]):
-                raise Exception("Missing required fields")
-
             # Get list of known faces
             known_faces = self.bucket_handler.get_list_of_objects(
                 company_id, "known_faces"
@@ -233,7 +224,7 @@ class Server:
                                 "Name": unknown_face_key,
                             }
                         },
-                        SimilarityThreshold=80,
+                        SimilarityThreshold=80.0,
                     )
                     if response["FaceMatches"]:
                         matches.append(
@@ -246,9 +237,10 @@ class Server:
                     logger.error(f"Failed to compare faces: {e}")
                     continue
 
-            unknonw_face_url = self.bucket_handler.generate_presigned_download_url(
+            unknown_face_url = self.bucket_handler.generate_presigned_download_url(
                 company_id, unknown_face_key, expires_in=3600
             )
+
             if not matches:
                 # No matches found - send alert
                 logger.error("Unknown face detected")
@@ -258,7 +250,7 @@ class Server:
                         {
                             "company_id": company_id,
                             "camera_id": camera_id,
-                            "unknown_face_url": unknonw_face_url,
+                            "unknown_face_url": unknown_face_url,
                             "track_id": track_id,
                             "face_id": face_id,
                         }
@@ -272,6 +264,30 @@ class Server:
         except Exception as e:
             logger.error(f"Failed to handle recognition request: {e}")
             await msg.respond(json.dumps({"success": False, "error": str(e)}).encode())
+
+    async def execute_rekognition(self, msg):
+        """Compare one face against multiple faces"""
+        try:
+            data = json.loads(msg.data.decode())
+            company_id = data.get("company_id")
+            camera_id = data.get("camera_id")
+            face_id = data.get("face_id")
+            track_id = data.get("track_id")
+
+            if not all([company_id, camera_id, face_id]):
+                raise Exception("Missing required fields")
+
+            # Create a new task for face comparison
+            task = asyncio.create_task(
+                self.compare_faces(company_id, camera_id, face_id, track_id, msg)
+            )
+            self.tasks.append(task)
+
+            # Clean up completed tasks
+            self.tasks = [t for t in self.tasks if not t.done()]
+
+        except Exception as e:
+            logger.error(f"Failed to start recognition request: {e}")
 
     async def start(self):
         """Start the server"""
@@ -326,13 +342,7 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s)))
 
-    nats_client = NatsClient()
-    bucket_handler = BucketHandler(
-        os.getenv("BUCKET_NAME"),
-        os.getenv("REGION"),
-    )
-
-    server = Server(bucket_handler, nats_client)
+    server = Server()
 
     try:
         await server.start()

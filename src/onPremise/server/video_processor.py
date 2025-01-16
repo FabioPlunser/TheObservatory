@@ -2,16 +2,22 @@ import multiprocessing as mp
 import cv2
 import numpy as np
 import torch
-from ultralytics import YOLO
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 import queue
+import os
+import asyncio
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 from person_tracker import OptimizedPersonTracker
 from reid_implementation import OptimizedCrossCameraTracker
-import os
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
+from ultralytics import YOLO
+from logging_config import setup_logger
 
+setup_logger()
 logger = logging.getLogger("VideoProcessor")
 
 
@@ -24,6 +30,9 @@ def process_frames_process(
 ):
     """Separate process for frame processing"""
     thread_pool = None
+    import os
+
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
     try:
         # Initialize device
         if torch.cuda.is_available():
@@ -40,8 +49,9 @@ def process_frames_process(
         model = YOLO("yolov8n.pt")
         model.to(device)
 
+        logger.info("Company_id: %s, Camera_id: %s", company_id, camera_id)
         # Initialize trackers
-        person_tracker = OptimizedPersonTracker(device)
+        person_tracker = OptimizedPersonTracker(company_id, camera_id, device)
         cross_camera_tracker = OptimizedCrossCameraTracker()
         # Attach cross-camera tracker to person_tracker
         person_tracker.cross_camera_tracker = cross_camera_tracker
@@ -123,7 +133,7 @@ def process_frames_process(
                 # Handle processed results
                 for future, frame in futures:
                     try:
-                        processed_frame = future.result(timeout=0.1)
+                        processed_frame = future.result(timeout=1)
                         if processed_frame is not None:
                             # Compress frame for output
                             _, buffer = cv2.imencode(
@@ -160,6 +170,9 @@ def read_frames_process(rtsp_url: str, frame_queue: mp.Queue, stop_event: mp.Eve
     max_retry_delay = 5.0
     max_consecutive_failures = 10
     failure_count = 0
+    import os
+
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
     while not stop_event.is_set():
         try:
@@ -244,6 +257,9 @@ def process_detections(
     timestamp: float,
 ) -> Optional[np.ndarray]:
     """Process detections for a single frame"""
+    import os
+
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
     try:
         # Update person tracker
         updated_tracks, new_tracks = person_tracker.update(frame, result)

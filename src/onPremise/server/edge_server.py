@@ -6,12 +6,17 @@ from typing import Dict, Set
 from database import Database
 from nats_client import SharedNatsClient, Commands
 from logging_config import setup_logger
+
 import socket
 import platform
 import asyncio
 import logging
 import multiprocessing
 import json
+
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 setup_logger()
 logger = logging.getLogger("EdgeServer")
@@ -97,7 +102,6 @@ class EdgeServer:
                 if response and response.get("success"):
                     logger.info("Successfully initialized bucket")
                     await self.db.update_company_init_bucket(True)
-                    await self._setup_alert_subscription()
                     break
                 else:
                     logger.error(f"Failed to initialize bucket: {response}")
@@ -111,6 +115,8 @@ class EdgeServer:
 
         if retry_count >= max_retries:
             logger.error("Max retries reached for bucket initialization")
+
+        await self._setup_alert_subscription()
 
         self._bucket_init_running = False
         self._bucket_init_task = None

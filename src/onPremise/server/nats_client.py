@@ -3,6 +3,10 @@ import asyncio
 import logging
 import json
 
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 from enum import Enum
 from typing import Optional
 from logging_config import setup_logger
@@ -44,11 +48,11 @@ class NatsClient:
             # Convert data to JSON and encode
             encoded_data = json.dumps(data).encode()
             # Wait max 5 seconds for response
-            response = await self.nc.request(subject, encoded_data, timeout=5.0)
+            response = await self.nc.request(subject, encoded_data, timeout=30)
             # Decode response
             return json.loads(response.data.decode())
         except Exception as e:
-            logger.error(f"NATS request error: {e}")
+            logger.error(f"NATS request error: for {subject} {e}")
             raise
 
     async def add_subscription(self, subject, callback):
@@ -90,7 +94,7 @@ class SharedNatsClient:
 
         try:
             logger.info(f"Initializing NATS client with URL: {nats_url}")
-            
+
             # Close existing instance if it exists
             if cls._instance is not None:
                 await cls._instance.close()
@@ -98,7 +102,7 @@ class SharedNatsClient:
 
             # Create new instance
             cls._instance = NatsClient(nats_url)
-            
+
             # Try to connect with timeout
             try:
                 async with asyncio.timeout(10.0):  # Increased timeout
@@ -134,9 +138,7 @@ class SharedNatsClient:
     @classmethod
     def get_instance(cls) -> Optional[NatsClient]:
         if not cls._instance:
-            logger.warning(
-                "NATS client not initialized"
-            )
+            logger.warning("NATS client not initialized")
         return cls._instance
 
     @classmethod
@@ -160,6 +162,7 @@ class SharedNatsClient:
             return None
 
         return cls._instance
+
 
 class Commands(Enum):
     INIT_BUCKET = "INIT_BUCKET"

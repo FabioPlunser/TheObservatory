@@ -32,18 +32,18 @@ class NatsClient:
         await self.nc.publish(subject, data)
 
     async def send_message_with_reply(self, subject, data):
+        logger.info(f"Subject: {subject}, Data: {data}")
         if not self.nc:
             logger.error("NATS client not initialized")
             return
         try:
             # Convert data to JSON and encode
             encoded_data = json.dumps(data).encode()
-            # Wait max 5 seconds for response
-            response = await self.nc.request(subject, encoded_data, timeout=5.0)
+            response = await self.nc.request(subject, encoded_data)
             # Decode response
             return json.loads(response.data.decode())
         except Exception as e:
-            logger.error(f"NATS request error: {e}")
+            logger.error(f"NATS request error for {subject}: {e}")
             raise
 
     async def add_subscription(self, subject, callback):

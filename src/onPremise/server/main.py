@@ -1,3 +1,9 @@
+import os
+import logging
+import signal
+import psutil
+import uvicorn
+
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
@@ -8,11 +14,7 @@ from routes import Router
 from nats_client import SharedNatsClient
 from logging_config import setup_logger
 
-import os
-import logging
-import signal
-import psutil  
-import uvicorn
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 setup_logger()
 logger = logging.getLogger("Main")
