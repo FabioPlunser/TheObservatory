@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +42,6 @@ class SimulatedCamera:
         try:
             if self.os_type == "darwin":
                 import subprocess
-
                 result = subprocess.run(
                     ["sysctl", "-n", "machdep.cpu.brand_string"],
                     capture_output=True,
@@ -51,7 +50,6 @@ class SimulatedCamera:
                 return "apple_silicon" if "Apple" in result.stdout else None
             elif self.os_type in ["linux", "windows"]:
                 import subprocess
-
                 result = subprocess.run(
                     ["nvidia-smi"],
                     capture_output=True,
@@ -73,18 +71,12 @@ class SimulatedCamera:
         return True
 
     @staticmethod
-    def get_available_video_sets(
-        base_path: str = "data/video_sets",
-    ) -> List[str]:
+    def get_available_video_sets(base_path: str = "data/video_sets") -> List[str]:
         """Get all available video sets"""
         if not os.path.exists(base_path):
             logger.error(f"Video sets directory not found: {base_path}")
             return []
-        return [
-            d
-            for d in os.listdir(base_path)
-            if os.path.isdir(os.path.join(base_path, d))
-        ]
+        return [d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))]
 
     @staticmethod
     def get_videos_in_set(set_path: str) -> List[str]:
@@ -162,6 +154,10 @@ class SimulatedCamera:
 
     async def start_streaming(self, video_path: str = "", stop_event: Optional[asyncio.Event] = None):
         """Start streaming with improved error handling"""
+        if not os.path.exists(video_path):
+            logger.error(f"Video file not found: {video_path}")
+            return
+            
         try:
             logger.info(f"Starting video stream for camera {self.camera_id} with video {video_path}")
             input_args = self.get_ffmpeg_input_args(video_path)
@@ -260,18 +256,28 @@ class SimulatedCamera:
             return False
 
 
-async def run_camera(video_infos: List[VideoInfo], stop_event: asyncio.Event):
+async def run_camera(video_infos: List[VideoInfo], stop_event: asyncio.Event, camera_index: int):
     """Run a single camera instance"""
     camera = SimulatedCamera()
     try:
         if await camera.discover_edge_server():
             if await camera.register_with_edge():
+                # Start from a random position in the video list for this camera
+                video_count = len(video_infos)
+                if video_count == 0:
+                    logger.error(f"No videos available for camera {camera_index}")
+                    return
+                    
+                # Offset each camera's starting point
+                start_index = (camera_index * (video_count // 6)) % video_count
+                
                 while not stop_event.is_set():
-                    for video_info in video_infos:
-                        logger.info(f"Streaming video {video_info.video_name} for camera {camera.camera_id}")
-                        await camera.start_streaming(video_info.full_path, stop_event)
-                        if stop_event.is_set():
-                            break
+                    video_info = video_infos[start_index % video_count]
+                    logger.info(f"Camera {camera_index} streaming video {video_info.video_name}")
+                    await camera.start_streaming(video_info.full_path, stop_event)
+                    if stop_event.is_set():
+                        break
+                    start_index += 1
     except Exception as e:
         logger.error(f"Error running camera {camera.camera_id}: {e}")
 
@@ -285,34 +291,42 @@ async def main():
 
     stop_event = asyncio.Event()
     try:
-        # Select videos for each camera
+        # Initialize video paths for all cameras
         video_paths = [[] for _ in range(args.streams)]
         for set_num in range(1, 12):  # Sets 1 to 11
-            for cam_num in range(1, 7):  # Cameras 1 to 6
-                if set_num <= 4 and cam_num > 5:
-                    continue  # Skip camera 6 for sets 1 to 4
-                video_paths[cam_num - 1].append(f"set_{set_num}/video{set_num}_{cam_num}.avi")
+            for cam_num in range(args.streams):  # Use all cameras
+                # Special handling for camera 6 (index 5)
+                if cam_num == 5:  # Camera 6
+                    if set_num >= 5:  # Only sets 5-11 for camera 6
+                        video_paths[cam_num].append(f"set_{set_num}/video{set_num}_{cam_num + 1}.avi")
+                else:  # Other cameras (1-5)
+                    video_paths[cam_num].append(f"set_{set_num}/video{set_num}_{cam_num + 1}.avi")
 
+        # Convert paths to VideoInfo objects and verify files exist
         selected_videos = []
         for cam_videos in video_paths:
             cam_video_info = []
             for video_path in cam_videos:
                 set_name, video_name = video_path.split('/')
                 full_path = os.path.join("data/video_sets", set_name, video_name)
-                cam_video_info.append(VideoInfo(set_name, video_name, full_path))
-            selected_videos.append(cam_video_info)
+                if os.path.exists(full_path):
+                    cam_video_info.append(VideoInfo(set_name, video_name, full_path))
+                else:
+                    logger.warning(f"Video file not found: {full_path}")
+            if cam_video_info:  # Only add if there are valid videos
+                selected_videos.append(cam_video_info)
 
         if not selected_videos:
-            logger.error("No videos available to stream")
+            logger.error("No valid videos available to stream")
             return
 
         # Create and run multiple camera instances
         camera_tasks = []
-        for cam_videos in selected_videos:
+        for i, cam_videos in enumerate(selected_videos):
             logger.info(
-                f"Starting camera with videos: {[video.video_name for video in cam_videos]}"
+                f"Starting camera {i} with {len(cam_videos)} videos: {[video.video_name for video in cam_videos]}"
             )
-            task = asyncio.create_task(run_camera(cam_videos, stop_event))
+            task = asyncio.create_task(run_camera(cam_videos, stop_event, i))
             camera_tasks.append(task)
 
         # Wait for keyboard interrupt
