@@ -4,12 +4,13 @@ import uuid
 import aiohttp
 import logging
 import platform
-import random
 import argparse
 from edge_server_discover import EdgeServerDiscovery
 from typing import List, Optional
 from dataclasses import dataclass
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,12 +29,13 @@ class SimulatedCamera:
         self.edge_server_url = None
         self.rtsp_url = None
         self.is_running = False
-        self.frame_rate = 30
+        self.frame_rate = 5
         self.frame_width = 640
         self.frame_height = 480
         self.os_type = platform.system().lower()
         self.gpu_vendor = self._detect_gpu()
         self.discovery = EdgeServerDiscovery()
+        self.executor = ThreadPoolExecutor(max_workers=6)  # Limit to 6 threads
 
     def _detect_gpu(self):
         """Detect available GPU for encoding"""
@@ -92,38 +94,13 @@ class SimulatedCamera:
             return []
         return [f for f in os.listdir(set_path) if f.endswith(".avi")]
 
-    @staticmethod
-    def choose_random_videos(
-        base_path: str = "data/video_sets", num_videos: int = 1
-    ) -> List[VideoInfo]:
-        """Choose random videos from available sets"""
-        video_sets = SimulatedCamera.get_available_video_sets(base_path)
-        if not video_sets:
-            logger.error("No video sets found")
-            return []
-
-        selected_videos = []
-        while len(selected_videos) < num_videos and video_sets:
-            set_name = random.choice(video_sets)
-            set_path = os.path.join(base_path, set_name)
-            videos = SimulatedCamera.get_videos_in_set(set_path)
-
-            if videos:
-                video_name = random.choice(videos)
-                full_path = os.path.join(set_path, video_name)
-                selected_videos.append(VideoInfo(set_name, video_name, full_path))
-            else:
-                video_sets.remove(set_name)
-
-        return selected_videos
-
     def get_ffmpeg_input_args(self, video_path: str) -> List[str]:
         """Get optimized FFmpeg input arguments"""
         if not video_path:
             # Generate test pattern if no video file
             return [
                 "-f", "lavfi",
-                "-i", "testsrc=size=640x480:rate=30",
+                "-i", "testsrc=size=640x480:rate=5",  # Reduce frame rate to 5 fps
                 "-pix_fmt", "yuv420p",
             ]
         else:
@@ -131,6 +108,8 @@ class SimulatedCamera:
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video_path,
+                "-r", "5",  # Set input frame rate to 5 fps
+                "-vf", "fps=5",  # Process and send only 5 frames per second
             ]
 
     def get_ffmpeg_output_args(self, rtsp_url: str) -> List[str]:
@@ -138,6 +117,7 @@ class SimulatedCamera:
         common_args = [
             "-f", "rtsp",
             "-rtsp_transport", "tcp",
+            "-r", "5",  # Set output frame rate to 5 fps
         ]
 
         # Try to detect NVIDIA GPU capabilities
@@ -145,16 +125,22 @@ class SimulatedCamera:
             try:
                 encoder_args = [
                     "-c:v", "h264_nvenc",
-                    "-preset", "p1",
+                    "-preset", "fast",  # Use a more efficient preset
                     "-tune", "ll",
                     "-zerolatency", "1",
-                    "-b:v", "2M",
-                    "-maxrate", "4M",
-                    "-bufsize", "8M",
+                    "-b:v", "1M",  # Reduce bitrate
+                    "-maxrate", "2M",
+                    "-bufsize", "4M",
                     "-g", "30",
                 ]
             except Exception:
                 encoder_args = self._get_cpu_encoder_args()
+        elif self.gpu_vendor == "apple_silicon":
+            encoder_args = [
+                "-c:v", "h264_videotoolbox",
+                "-allow_sw", "1",
+                "-realtime", "1",
+            ]
         else:
             encoder_args = self._get_cpu_encoder_args()
 
@@ -165,10 +151,10 @@ class SimulatedCamera:
         return [
             "-c:v", "libx264",
             "-preset", "veryfast",
-            "-tune", "zerolatency",
+            "-tune", "ll",
             "-profile:v", "baseline",
             "-x264-params", "nal-hrd=cbr:force-cfr=1",
-            "-b:v", "2M",
+            "-b:v", "1M",
             "-maxrate", "2M",
             "-bufsize", "2M",
             "-g", "30",
@@ -177,7 +163,7 @@ class SimulatedCamera:
     async def start_streaming(self, video_path: str = "", stop_event: Optional[asyncio.Event] = None):
         """Start streaming with improved error handling"""
         try:
-            logger.info(f"Starting video stream for camera {self.camera_id}")
+            logger.info(f"Starting video stream for camera {self.camera_id} with video {video_path}")
             input_args = self.get_ffmpeg_input_args(video_path)
             output_args = self.get_ffmpeg_output_args(self.rtsp_url)
 
@@ -195,12 +181,25 @@ class SimulatedCamera:
                 stderr=asyncio.subprocess.PIPE,
             )
 
+            async def log_output(stream, level):
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    decoded_line = line.decode("utf-8").strip()
+                    logger.log(level, decoded_line)
+
+            stdout_task = asyncio.create_task(log_output(process.stdout, logging.INFO))
+            stderr_task = asyncio.create_task(log_output(process.stderr, logging.ERROR))
+
             try:
                 if stop_event:
                     while not stop_event.is_set():
                         if process.returncode is not None:
+                            logger.error(f"FFmpeg process exited with code {process.returncode}")
                             break
                         await asyncio.sleep(1)
+                    process.terminate()
                 else:
                     await process.wait()
             finally:
@@ -210,7 +209,9 @@ class SimulatedCamera:
                         await asyncio.wait_for(process.wait(), timeout=5.0)
                     except asyncio.TimeoutError:
                         process.kill()
-                        
+
+            await asyncio.gather(stdout_task, stderr_task)
+
         except Exception as e:
             logger.error(f"Streaming error for camera {self.camera_id}: {str(e)}")
 
@@ -259,39 +260,59 @@ class SimulatedCamera:
             return False
 
 
-async def run_camera(video_info: VideoInfo, stop_event: asyncio.Event):
+async def run_camera(video_infos: List[VideoInfo], stop_event: asyncio.Event):
     """Run a single camera instance"""
     camera = SimulatedCamera()
     try:
         if await camera.discover_edge_server():
             if await camera.register_with_edge():
-                await camera.start_streaming(video_info.full_path, stop_event)
+                while not stop_event.is_set():
+                    for video_info in video_infos:
+                        logger.info(f"Streaming video {video_info.video_name} for camera {camera.camera_id}")
+                        await camera.start_streaming(video_info.full_path, stop_event)
+                        if stop_event.is_set():
+                            break
     except Exception as e:
-        logger.error(f"Error running camera: {e}")
+        logger.error(f"Error running camera {camera.camera_id}: {e}")
 
 
 async def main():
     parser = argparse.ArgumentParser(description="Run multiple simulated cameras")
     parser.add_argument(
-        "--streams", type=int, default=3, help="Number of video streams to create"
+        "--streams", type=int, default=6, help="Number of video streams to create"
     )
     args = parser.parse_args()
 
     stop_event = asyncio.Event()
     try:
-        # Select random videos
-        selected_videos = SimulatedCamera.choose_random_videos(num_videos=args.streams)
+        # Select videos for each camera
+        video_paths = [[] for _ in range(args.streams)]
+        for set_num in range(1, 12):  # Sets 1 to 11
+            for cam_num in range(1, 7):  # Cameras 1 to 6
+                if set_num <= 4 and cam_num > 5:
+                    continue  # Skip camera 6 for sets 1 to 4
+                video_paths[cam_num - 1].append(f"set_{set_num}/video{set_num}_{cam_num}.avi")
+
+        selected_videos = []
+        for cam_videos in video_paths:
+            cam_video_info = []
+            for video_path in cam_videos:
+                set_name, video_name = video_path.split('/')
+                full_path = os.path.join("data/video_sets", set_name, video_name)
+                cam_video_info.append(VideoInfo(set_name, video_name, full_path))
+            selected_videos.append(cam_video_info)
+
         if not selected_videos:
             logger.error("No videos available to stream")
             return
 
         # Create and run multiple camera instances
         camera_tasks = []
-        for video_info in selected_videos:
+        for cam_videos in selected_videos:
             logger.info(
-                f"Starting camera with video: {video_info.video_name} from set {video_info.set_name}"
+                f"Starting camera with videos: {[video.video_name for video in cam_videos]}"
             )
-            task = asyncio.create_task(run_camera(video_info, stop_event))
+            task = asyncio.create_task(run_camera(cam_videos, stop_event))
             camera_tasks.append(task)
 
         # Wait for keyboard interrupt

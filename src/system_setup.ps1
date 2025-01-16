@@ -219,7 +219,7 @@ function Start-Server {
     }
 
     Write-Host "⏳ Waiting for server to initialize..."
-    $maxWaitTime = 10
+    $maxWaitTime = 40
     $waited = 0
     $serverStarted = $false
 
@@ -288,7 +288,7 @@ function Configure-NatsUrl {
     )
 
     if (-not $nats_url) {
-        Write-Host "ℹ️ No NATS URL to configure"
+        Write-Host "No NATS URL to configure"
         return
     }
 
