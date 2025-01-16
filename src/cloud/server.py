@@ -60,6 +60,7 @@ class Server:
     async def handle_company_bucket_creation_request(self, msg):
         """Handle request to create a company folder in the bucket"""
         try:
+            logger.info("Handling company bucket creation request")
             data = json.loads(msg.data.decode())
 
             company_id = data.get("company_id")
@@ -82,6 +83,7 @@ class Server:
     async def handle_presigned_upload_known_faces_request(self, msg):
         """Handle request for presigned URL for known face upload"""
         try:
+            logger.info("Handling presigned upload known face request")
             data = json.loads(msg.data.decode())
 
             company_id = data.get("company_id")
@@ -147,6 +149,7 @@ class Server:
     async def handle_presigned_download_all_known_faces_request(self, msg):
         """Handle request for presigned URL for all known faces download"""
         try:
+            logger.info("Handling presigned download all known faces request")
             data = json.loads(msg.data.decode())
             company_id = data.get("company_id")
             if not company_id:
@@ -175,6 +178,7 @@ class Server:
     async def handle_delete_known_face_request(self, msg):
         """Handle request to delete a known face from the bucket"""
         try:
+            logger.info("Handling delete known face request")
             data = json.loads(msg.data.decode())
             key = data.get("key")
 
@@ -199,6 +203,7 @@ class Server:
     async def compare_faces(self, company_id, camera_id, face_id, track_id):
         """Separate method to handle face comparison process"""
         try:
+            logger.info("Handling recognition request...")
             # Get list of known faces
             known_faces = self.bucket_handler.get_list_of_objects(
                 company_id, "known_faces"
@@ -258,6 +263,7 @@ class Server:
                 )
 
             logger.info("Recognition request completed")
+            return
         except Exception as e:
             logger.error(f"Failed to handle recognition request: {e}")
 
@@ -281,6 +287,7 @@ class Server:
 
             # Clean up completed tasks
             self.tasks = [t for t in self.tasks if not t.done()]
+            logger.info(f"Active tasks: {len(self.tasks)}")
 
         except Exception as e:
             logger.error(f"Failed to start recognition request: {e}")
