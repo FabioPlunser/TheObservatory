@@ -8,40 +8,39 @@ function Handle-Terraform {
         [string]$action
     )
 
-    if ($action -eq "l") {
-        Setup-SSH-Keys
-        Apply-Terraform
-    }
-    elseif ($action -eq "d") {
-        Destroy-Terraform
-        $close = Read-Host "Do you want to continue with the setup script? (y/n)"
-        if ($close -eq "n") {
-            exit
+    # Store the starting location
+    $startLocation = Get-Location
+
+    try {
+        if ($action -eq "l") {
+            Setup-SSH-Keys
+            Apply-Terraform
         }
-    }
-    elseif ($action -eq "n") {
-        Write-Host "Continuing with the setup script..."
-        $nats_ip = Get-NatsIp
-        if ($nats_ip) {
-            Write-Host "🔄 Configuring edge server with existing NATS URL..."
-            try {
-                $response = Invoke-RestMethod -Uri "http://localhost:8000/api/update-cloud-url" -Method Post -Body "nats://${nats_ip}:4222" -ContentType "application/x-www-form-urlencoded"
-                if ($response.status -eq "success") {
-                    Write-Host "✅ Edge server configured with NATS URL"
-                }
-                else {
-                    Write-Host "⚠️ Failed to configure edge server: $($response.message)"
-                }
-            }
-            catch {
-                Write-Host "⚠️ Failed to configure edge server. You can manually set the NATS URL in the web interface."
-                Write-Host "   NATS URL: nats://${nats_ip}:4222"
+        elseif ($action -eq "d") {
+            Destroy-Terraform
+            $close = Read-Host "Do you want to continue with the setup script? (y/n)"
+            if ($close -eq "n") {
+                exit
             }
         }
+        elseif ($action -eq "n") {
+            Write-Host "Continuing with the setup script..."
+            # Store NATS IP for later use if it exists
+            $nats_ip = Get-NatsIp
+            if ($nats_ip) {
+                $Global:nats_url = "nats://${nats_ip}:4222"
+                Write-Host "✅ Found existing NATS URL: $Global:nats_url"
+                Write-Host "The edge server will be configured with this URL once it's running."
+            }
+        }
+        else {
+            Write-Host "🚫 Invalid action. Please enter 'launch' or 'destroy'."
+            exit 1
+        }
     }
-    else {
-        Write-Host "🚫 Invalid action. Please enter 'launch' or 'destroy'."
-        exit 1
+    finally {
+        # Always return to starting location
+        Set-Location $startLocation
     }
 }
 
@@ -151,25 +150,70 @@ function Apply-Terraform {
         exit 1
     }
 
-    # Get NATS server URL from Terraform output
+    # Get NATS server URL from Terraform output but don't configure it yet
     $nats_ip = terraform output -raw nats_instance_public_ip
-    
-    Write-Host "🔄 Configuring edge server with NATS URL..."
-    try {
-        $response = Invoke-RestMethod -Uri "http://localhost:8000/api/update-cloud-url" -Method Post -Body "nats://${nats_ip}:4222" -ContentType "application/x-www-form-urlencoded"
-        if ($response.status -eq "success") {
-            Write-Host "✅ Edge server configured with NATS URL"
-        }
-        else {
-            Write-Host "⚠️ Failed to configure edge server: $($response.message)"
-        }
-    }
-    catch {
-        Write-Host "⚠️ Failed to configure edge server. You can manually set the NATS URL in the web interface."
-        Write-Host "   NATS URL: nats://${nats_ip}:4222"
+    if ($nats_ip) {
+        Write-Host "✅ Got NATS IP: $nats_ip"
+        Write-Host "The edge server will be configured with this NATS URL once it's running."
+        $Global:nats_url = "nats://${nats_ip}:4222"
     }
 
     Pop-Location
+}
+
+function Configure-NatsUrl {
+    # This function will be called from system_setup.ps1 after the server is running
+    param (
+        [string]$nats_url
+    )
+
+    if (-not $nats_url) {
+        Write-Host "ℹ️ No NATS URL to configure"
+        return
+    }
+
+    Write-Host "🔄 Configuring edge server with NATS URL: $nats_url"
+    
+    $maxRetries = 5
+    $retryCount = 0
+    $success = $false
+
+    while (-not $success -and $retryCount -lt $maxRetries) {
+        try {
+            $body = @{
+                cloud_url = $nats_url
+            }
+            
+            $response = Invoke-RestMethod -Uri "http://localhost:8000/api/update-cloud-url" `
+                -Method Post `
+                -Body ($body | ConvertTo-Json) `
+                -ContentType "application/json"
+
+            if ($response.status -eq "success") {
+                Write-Host "✅ Edge server configured with NATS URL"
+                $success = $true
+                break
+            }
+            
+            Write-Host "⚠️ Retry $($retryCount + 1) of $maxRetries..."
+            $retryCount++
+            Start-Sleep -Seconds 2
+        }
+        catch {
+            Write-Host "⚠️ Server not ready yet, retrying..."
+            $retryCount++
+            Start-Sleep -Seconds 2
+        }
+    }
+
+    if (-not $success) {
+        Write-Host "⚠️ Failed to configure NATS URL automatically"
+        Write-Host "Manual configuration steps:"
+        Write-Host "1. Open http://localhost:8000 in your browser"
+        Write-Host "2. Click on 'Settings'"
+        Write-Host "3. Enter this NATS URL: $nats_url"
+        Write-Host "4. Click 'Save'"
+    }
 }
 
 function Destroy-Terraform {
@@ -216,6 +260,8 @@ function Get-NatsIp {
     catch {
         Write-Host "ℹ️ No existing NATS instance found"
     }
-    Pop-Location
+    finally {
+        Pop-Location
+    }
     return $null
 }
