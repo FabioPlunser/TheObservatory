@@ -159,30 +159,19 @@ def read_frames_process(rtsp_url: str, frame_queue: mp.Queue, stop_event: mp.Eve
                 # Create capture with optimized settings
                 cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
 
-                # Configure additional capture properties
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer size
-                cap.set(cv2.CAP_PROP_FPS, 15)       # Lower FPS for stability
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-                
-                # Check connection with shorter timeout
-                start_time = time.time()
-                connected = False
-                while time.time() - start_time < 5 and not connected:  # 5 second timeout
-                    ret = cap.grab()  # Just grab a frame to test connection
-                    if ret:
-                        connected = True
-                        logger.info("Successfully connected to RTSP stream")
-                        break
-                    time.sleep(0.1)
 
-                if not connected:
-                    raise RuntimeError("Failed to open RTSP stream within timeout")
+                # Check connection
+                if not cap.isOpened():
+                    raise RuntimeError("Failed to open RTSP stream")
 
-                retry_delay = 1.0
-                failure_count = 0
+                logger.info("Successfully connected to RTSP stream")
+                retry_delay = 1.0  # Reset retry delay on successful connection
+                failure_count = 0  # Reset failure count
 
             frame_counter = 0
-            skip_frames = 1  # Process every 3rd frame
+            skip_frames = 2  # Process every 3rd frame
 
             while not stop_event.is_set():
                 ret, frame = cap.read()

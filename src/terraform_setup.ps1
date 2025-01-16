@@ -17,6 +17,7 @@ function Handle-Terraform {
             Apply-Terraform
         }
         elseif ($action -eq "d") {
+            Setup-SSH-Keys
             Destroy-Terraform
             $close = Read-Host "Do you want to continue with the setup script? (y/n)"
             if ($close -eq "n") {
@@ -46,23 +47,23 @@ function Handle-Terraform {
 
 function Test-AWSCredentials {
     try {
-        # First test basic AWS CLI access
-        $null = aws sts get-caller-identity 2>&1
-        
-        # Then specifically check for token expiration using terraform
-        Push-Location "terraform"
+        Write-Host "🔍 Testing basic AWS CLI access..."
+        $identity = aws sts get-caller-identity 2>&1
+        Write-Host "✅ AWS CLI access successful. Identity: $identity"
+
+        Write-Host "🔍 Checking for token expiration using Terraform..."
         $result = terraform providers 2>&1
-        Pop-Location
-        
+
         if ($result -match "ExpiredToken") {
             Write-Host "❌ Token has expired"
             return $false
         }
-        
+
+        Write-Host "✅ AWS credentials are valid and not expired"
         return $true
     }
     catch {
-        Write-Host "❌ AWS CLI access failed"
+        Write-Host "❌ AWS CLI access failed: $_"
         return $false
     }
 }
@@ -217,7 +218,7 @@ function Configure-NatsUrl {
 }
 
 function Destroy-Terraform {
-    Write-Host "🛑 Destroying Terraform-managed infrastructure..."
+    Write-Host "Destroying Terraform-managed infrastructure..."
     Push-Location "terraform"
     
     # Check credentials before proceeding
@@ -225,7 +226,7 @@ function Destroy-Terraform {
     Setup-AWS-Credentials
 
     if (-not (Test-Path -Path $script:key_pair_path)) {
-        Write-Host "❌ SSH key not found at: $script:key_pair_path"
+        Write-Host "SSH key not found at: $script:key_pair_path"
         Write-Host "Nothing to destroy - no valid SSH key found"
         Pop-Location
         exit 1

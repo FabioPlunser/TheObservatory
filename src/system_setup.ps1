@@ -101,16 +101,6 @@ function Install-Dependencies {
             }
         }
     }
-
-    # Install PyTorch
-    if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
-        Write-Host "✅ NVIDIA CUDA detected"
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-    }
-    else {
-        Write-Host "⚠️ NVIDIA CUDA not found, using CPU for processing"
-        pip install torch torchvision torchaudio
-    }
 }
 
 function Setup-Frontend {
