@@ -235,6 +235,13 @@ function Start-Server {
                 $serverStarted = $true
                 break
             }
+            if ($output_content -match "GET /api/alarm HTTP/1.1" -or 
+                $output_content -match "GET /api/cameras HTTP/1.1 200 OK") {
+                Write-Host "Detected /api/alarm request with 200 OK"
+                # Optionally set $serverStarted or another action
+                $serverStarted = $true
+                break
+            }
         }
 
         # Check for port conflict error

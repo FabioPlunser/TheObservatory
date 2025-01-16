@@ -29,7 +29,7 @@ class SimulatedCamera:
         self.edge_server_url = None
         self.rtsp_url = None
         self.is_running = False
-        self.frame_rate = 5
+        self.frame_rate = 15
         self.frame_width = 640
         self.frame_height = 480
         self.os_type = platform.system().lower()
@@ -92,7 +92,7 @@ class SimulatedCamera:
             # Generate test pattern if no video file
             return [
                 "-f", "lavfi",
-                "-i", "testsrc=size=640x480:rate=5",  # Reduce frame rate to 5 fps
+                "-i", "testsrc=size=640x480:rate=15",  
                 "-pix_fmt", "yuv420p",
             ]
         else:
@@ -100,8 +100,8 @@ class SimulatedCamera:
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video_path,
-                "-r", "5",  # Set input frame rate to 5 fps
-                "-vf", "fps=5",  # Process and send only 5 frames per second
+                "-r", "15",  
+                "-vf", "fps=15",  
             ]
 
     def get_ffmpeg_output_args(self, rtsp_url: str) -> List[str]:
@@ -109,7 +109,7 @@ class SimulatedCamera:
         common_args = [
             "-f", "rtsp",
             "-rtsp_transport", "tcp",
-            "-r", "5",  # Set output frame rate to 5 fps
+            "-r", "15",  
         ]
 
         # Try to detect NVIDIA GPU capabilities
@@ -120,7 +120,7 @@ class SimulatedCamera:
                     "-preset", "fast",  # Use a more efficient preset
                     "-tune", "ll",
                     "-zerolatency", "1",
-                    "-b:v", "1M",  # Reduce bitrate
+                    "-b:v", "2M",  # Reduce bitrate
                     "-maxrate", "2M",
                     "-bufsize", "4M",
                     "-g", "30",
@@ -146,7 +146,7 @@ class SimulatedCamera:
             "-tune", "ll",
             "-profile:v", "baseline",
             "-x264-params", "nal-hrd=cbr:force-cfr=1",
-            "-b:v", "1M",
+            "-b:v", "2M",
             "-maxrate", "2M",
             "-bufsize", "2M",
             "-g", "30",
@@ -262,22 +262,21 @@ async def run_camera(video_infos: List[VideoInfo], stop_event: asyncio.Event, ca
     try:
         if await camera.discover_edge_server():
             if await camera.register_with_edge():
-                # Start from a random position in the video list for this camera
                 video_count = len(video_infos)
                 if video_count == 0:
                     logger.error(f"No videos available for camera {camera_index}")
                     return
-                    
-                # Offset each camera's starting point
-                start_index = (camera_index * (video_count // 6)) % video_count
-                
+
                 while not stop_event.is_set():
-                    video_info = video_infos[start_index % video_count]
-                    logger.info(f"Camera {camera_index} streaming video {video_info.video_name}")
-                    await camera.start_streaming(video_info.full_path, stop_event)
-                    if stop_event.is_set():
-                        break
-                    start_index += 1
+                    # Play all videos in sequence
+                    for video_info in video_infos:
+                        if stop_event.is_set():
+                            break
+                        logger.info(f"Camera {camera_index} streaming video {video_info.video_name}")
+                        await camera.start_streaming(video_info.full_path, stop_event)
+                    
+                    logger.info(f"Camera {camera_index} completed one full sequence, starting over")
+                    # Loop will start over from the beginning after playing all videos
     except Exception as e:
         logger.error(f"Error running camera {camera.camera_id}: {e}")
 
