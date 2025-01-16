@@ -275,9 +275,6 @@ def process_detections(
 
         all_tracks = updated_tracks + new_tracks
         for track in all_tracks:
-            if track.face_image is None:
-                track.face_image = person_tracker._extract_face(frame, track.bbox)
-
             # Get person crop
             x, y, w, h = map(int, track.bbox)
             person_crop = frame[y : y + h, x : x + w]
