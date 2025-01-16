@@ -169,7 +169,7 @@ function Configure-NatsUrl {
     )
 
     if (-not $nats_url) {
-        Write-Host "ℹ️ No NATS URL to configure"
+        Write-Host "No NATS URL to configure"
         return
     }
 
@@ -259,7 +259,7 @@ function Get-NatsIp {
         }
     }
     catch {
-        Write-Host "ℹ️ No existing NATS instance found"
+        Write-Host "No existing NATS instance found"
     }
     finally {
         Pop-Location

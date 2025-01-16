@@ -276,7 +276,7 @@ function Start-Server {
     }
 
     Write-Host "`n✅ Server started successfully!"
-    Write-Host "ℹ️ Note: NATS warnings are normal when no cloud URL is configured."
+    Write-Host "Note: NATS warnings are normal when no cloud URL is configured."
 }
 
 function Configure-NatsUrl {
