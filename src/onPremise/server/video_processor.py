@@ -13,18 +13,22 @@ from reid_implementation import OptimizedCrossCameraTracker
 import os
 import asyncio
 
+from src.onPremise.server.face_recognition_handler import AsyncFaceRecognitionHandler
+
 logger = logging.getLogger("VideoProcessor")
 
 
 def process_frames_process(
-    frame_queue: mp.Queue,
-    output_queue: mp.Queue,
-    company_id: str,
-    camera_id: str,
-    stop_event: mp.Event,
+        frame_queue: mp.Queue,
+        output_queue: mp.Queue,
+        company_id: str,
+        camera_id: str,
+        stop_event: mp.Event,
+        db=None
 ):
     """Separate process for frame processing"""
     thread_pool = None
+    face_recognition_handler = None
     try:
         # Initialize device
         if torch.cuda.is_available():
@@ -37,15 +41,24 @@ def process_frames_process(
             device = torch.device("cpu")
             torch.set_num_threads(mp.cpu_count())
 
-        # Initialize YOLO model with correct settings
+        # Initialize YOLO model
         model = YOLO("yolov8n.pt")
         model.to(device)
 
         # Initialize trackers
         person_tracker = OptimizedPersonTracker(device)
         cross_camera_tracker = OptimizedCrossCameraTracker()
-        # Attach cross-camera tracker to person_tracker
         person_tracker.cross_camera_tracker = cross_camera_tracker
+
+        # Create event loop for this process
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Initialize face recognition handler
+        face_recognition_handler = AsyncFaceRecognitionHandler(
+            company_id, camera_id, db
+        )
+        loop.run_until_complete(face_recognition_handler.start())
 
         # Initialize thread pool
         thread_pool = ThreadPoolExecutor(max_workers=4)
@@ -61,16 +74,11 @@ def process_frames_process(
                 while len(batch_frames) < batch_size:
                     try:
                         frame_data, timestamp = frame_queue.get_nowait()
-
-                        # Decompress frame
                         nparr = np.frombuffer(frame_data, np.uint8)
                         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                        if frame is None:
-                            continue
-
-                        batch_frames.append(frame)
-                        batch_timestamps.append(timestamp)
+                        if frame is not None:
+                            batch_frames.append(frame)
+                            batch_timestamps.append(timestamp)
                     except queue.Empty:
                         break
 
@@ -78,53 +86,73 @@ def process_frames_process(
                     time.sleep(0.001)
                     continue
 
-                # Process batch with YOLO - Updated model call
-                try:
-                    results = model.track(
-                        source=batch_frames,
-                        conf=0.5,
-                        iou=0.7,
-                        persist=True,
-                        tracker="bytetrack.yaml",
-                        device=device,
-                        verbose=False,
-                    )
+                # Process batch with YOLO - this is synchronous
+                results = model.track(
+                    source=batch_frames,
+                    conf=0.5,
+                    iou=0.7,
+                    persist=True,
+                    tracker="bytetrack.yaml",
+                    device=device,
+                    verbose=False,
+                )
 
-                    # Process detections in parallel
-                    futures = []
-                    for frame, timestamp, result in zip(
-                        batch_frames, batch_timestamps, results
-                    ):
-                        future = thread_pool.submit(
-                            process_detections,
-                            frame,
-                            result,
-                            person_tracker,
-                            cross_camera_tracker,
-                            camera_id,
-                            timestamp,
+                # Process each frame's detections
+                for frame, timestamp, result in zip(batch_frames, batch_timestamps, results):
+                    try:
+                        # Update person tracker and get tracks (synchronous)
+                        updated_tracks, new_tracks = person_tracker.update(frame, result)
+                        all_tracks = updated_tracks + new_tracks
+                        draw_frame = frame.copy()
+
+                        # Process faces asynchronously
+                        for track in all_tracks:
+                            if track.face_image is None:
+                                track.face_image = person_tracker._extract_face(frame, track.bbox)
+
+                            if face_recognition_handler and track.face_image is not None:
+                                loop.run_until_complete(
+                                    face_recognition_handler.queue_recognition(track, track.face_image))
+                                loop.run_until_complete(face_recognition_handler.cleanup_processed_faces())
+
+                            # Draw bounding box and information
+                            x, y, w, h = map(int, track.bbox)
+                            cv2.rectangle(draw_frame, (x, y), (x + w, y + h), track.color, 2)
+
+                            text = f"ID: {track.track_id} ({track.recognition_status})"
+                            (text_width, text_height), _ = cv2.getTextSize(
+                                text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
+                            )
+                            cv2.rectangle(
+                                draw_frame,
+                                (x, y - text_height - 10),
+                                (x + text_width + 10, y),
+                                track.color,
+                                -1,
+                            )
+                            cv2.putText(
+                                draw_frame,
+                                text,
+                                (x + 5, y - 7),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.5,
+                                (255, 255, 255),
+                                2,
+                            )
+
+                        # Compress and queue the processed frame
+                        _, buffer = cv2.imencode(
+                            ".jpg",
+                            draw_frame,
+                            [cv2.IMWRITE_JPEG_QUALITY, 85],
                         )
-                        futures.append((future, frame))
+                        frame_bytes = buffer.tobytes()
+                        if not output_queue.full():
+                            output_queue.put_nowait(frame_bytes)
 
-                    # Handle processed results
-                    for future, frame in futures:
-                        try:
-                            processed_frame = future.result(timeout=0.1)
-                            if processed_frame is not None:
-                                # Compress frame for output
-                                _, buffer = cv2.imencode(
-                                    ".jpg",
-                                    processed_frame,
-                                    [cv2.IMWRITE_JPEG_QUALITY, 85],
-                                )
-                                frame_bytes = buffer.tobytes()
-
-                                if not output_queue.full():
-                                    output_queue.put_nowait(frame_bytes)
-                        except Exception as e:
-                            logger.error(f"Error processing detection: {e}")
-                except Exception as e:
-                    logger.error(f"Error processing batch: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing detection: {e}")
+                        continue
 
                 batch_frames = []
                 batch_timestamps = []
@@ -139,7 +167,9 @@ def process_frames_process(
     finally:
         if thread_pool:
             thread_pool.shutdown()
-
+        if face_recognition_handler:
+            loop.run_until_complete(face_recognition_handler.stop())
+        loop.close()
 
 def read_frames_process(rtsp_url: str, frame_queue: mp.Queue, stop_event: mp.Event):
     """Separate process for frame reading with enhanced RTSP handling"""
@@ -229,6 +259,7 @@ def process_detections(
     cross_camera_tracker: OptimizedCrossCameraTracker,
     camera_id: str,
     timestamp: float,
+    face_recognition_handler: Optional[AsyncFaceRecognitionHandler] = None
 ) -> Optional[np.ndarray]:
     """Process detections for a single frame"""
     try:
@@ -248,6 +279,12 @@ def process_detections(
         for track in all_tracks:
             if track.face_image is None:
                 track.face_image = person_tracker._extract_face(frame, track.bbox)
+
+            # Handle face recognition if handler is available
+            if face_recognition_handler and track.face_image is not None:
+                asyncio.run(face_recognition_handler.queue_recognition(track, track.face_image))
+                # Cleanup processed faces periodically
+                asyncio.run(face_recognition_handler.cleanup_processed_faces())
 
             # Get person crop
             x, y, w, h = map(int, track.bbox)
@@ -324,10 +361,12 @@ def process_detections(
 
 
 class VideoProcessor:
-    def __init__(self, rtsp_url: str, company_id: str, camera_id: str):
+    def __init__(self, rtsp_url: str, company_id: str, camera_id: str, db=None):
         self.rtsp_url = rtsp_url
         self.company_id = company_id
         self.camera_id = camera_id
+        self.db = db
+
 
         # Initialize queues with reasonable sizes
         self.frame_queue = mp.Queue(maxsize=30)
@@ -358,6 +397,7 @@ class VideoProcessor:
                     self.company_id,
                     self.camera_id,
                     self.stop_event,
+                    self.db,
                 ),
             )
             self.processes.append(processor_process)

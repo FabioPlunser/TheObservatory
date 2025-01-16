@@ -258,7 +258,7 @@ class EdgeServer:
             await self.stop_camera_stream(camera_id)
             company_id = await self.db.get_company_id()
             # Create and start new processor
-            processor = VideoProcessor(rtsp_url, company_id, camera_id)
+            processor = VideoProcessor(rtsp_url, company_id, camera_id, self.db)
             self.processors[camera_id] = processor
             processor.start()
 

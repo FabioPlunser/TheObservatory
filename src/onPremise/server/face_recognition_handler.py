@@ -6,11 +6,10 @@ import aiohttp
 import uuid
 
 from logging_config import setup_logger
-from nats_client import NatsClient, Commands
+from nats_client import Commands, SharedNatsClient
 from person_tracker import TrackedPerson
 from database import Database
 from datetime import datetime, timedelta
-
 
 setup_logger()
 logger = logging.getLogger("FaceRecognitionHandler")
@@ -18,9 +17,9 @@ logger = logging.getLogger("FaceRecognitionHandler")
 
 class AsyncFaceRecognitionHandler:
     def __init__(
-        self, nats_client: NatsClient, company_id: str, camera_id: str, db: Database
+        self, company_id: str, camera_id: str, db: Database
     ):
-        self.nats_client = nats_client
+        self.nats_client = SharedNatsClient.get_instance()
         self.company_id = company_id
         self.camera_id = camera_id
         self.db = db
