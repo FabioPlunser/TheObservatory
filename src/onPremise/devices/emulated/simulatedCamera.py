@@ -29,9 +29,9 @@ class SimulatedCamera:
         self.edge_server_url = None
         self.rtsp_url = None
         self.is_running = False
-        self.frame_rate = 15
-        self.frame_width = 640
-        self.frame_height = 480
+        self.frame_rate = 1
+        self.frame_width = 640*2
+        self.frame_height = 480*2
         self.os_type = platform.system().lower()
         self.gpu_vendor = self._detect_gpu()
         self.discovery = EdgeServerDiscovery()
@@ -92,7 +92,7 @@ class SimulatedCamera:
             # Generate test pattern if no video file
             return [
                 "-f", "lavfi",
-                "-i", "testsrc=size=640x480:rate=15",  
+                "-i", "testsrc=size=640x480:rate=1",  
                 "-pix_fmt", "yuv420p",
             ]
         else:
@@ -100,8 +100,8 @@ class SimulatedCamera:
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video_path,
-                "-r", "15",  
-                "-vf", "fps=15",  
+                "-r", "1",  
+                "-vf", "fps=1",  
             ]
 
     def get_ffmpeg_output_args(self, rtsp_url: str) -> List[str]:
@@ -109,7 +109,7 @@ class SimulatedCamera:
         common_args = [
             "-f", "rtsp",
             "-rtsp_transport", "tcp",
-            "-r", "15",  
+            "-r", "1",  
         ]
 
         # Try to detect NVIDIA GPU capabilities
