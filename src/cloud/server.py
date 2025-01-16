@@ -196,7 +196,7 @@ class Server:
             logger.error(f"Failed to handle delete known face request: {e}")
             await msg.respond(json.dumps({"success": False, "error": str(e)}).encode())
 
-    async def compare_faces(self, company_id, camera_id, face_id, track_id, msg):
+    async def compare_faces(self, company_id, camera_id, face_id, track_id):
         """Separate method to handle face comparison process"""
         try:
             # Get list of known faces
@@ -257,13 +257,9 @@ class Server:
                     ).encode(),
                 )
 
-            await msg.respond(
-                json.dumps({"success": True, "matches": matches}).encode()
-            )
             logger.info("Recognition request completed")
         except Exception as e:
             logger.error(f"Failed to handle recognition request: {e}")
-            await msg.respond(json.dumps({"success": False, "error": str(e)}).encode())
 
     async def execute_rekognition(self, msg):
         """Compare one face against multiple faces"""

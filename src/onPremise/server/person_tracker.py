@@ -103,6 +103,9 @@ class OptimizedPersonTracker:
 
     def _process_face_queue(self):
         """Background thread for processing face detection queue"""
+        import os
+
+        os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
         while self.face_processing:
             try:
                 track_id, frame, bbox = self.face_queue.get(timeout=0.1)
@@ -137,10 +140,15 @@ class OptimizedPersonTracker:
 
         os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
         try:
+
             x, y, w, h = map(int, bbox)
 
             # Validate input frame
-            if frame is None or frame.size == 0:
+            if (
+                frame is None
+                or frame.size == 0
+                or not (0 <= x < frame.shape[1] and 0 <= y < frame.shape[0])
+            ):
                 logger.error("Invalid input frame")
                 return None
 
@@ -155,10 +163,12 @@ class OptimizedPersonTracker:
             person_roi = frame[y1:y2, x1:x2]
             if (
                 person_roi.size == 0
-                or person_roi.shape[0] == 0
-                or person_roi.shape[1] == 0
+                or person_roi.shape[0] <= 0
+                or person_roi.shape[1] <= 0
             ):
-                logger.error("Invalid ROI dimensions")
+                logger.error(
+                    f"ROI is empty or invalid: {person_roi.shape if person_roi is not None else None}"
+                )
                 return None
 
             # Create a new detector instance for each image
