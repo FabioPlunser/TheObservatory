@@ -5,6 +5,7 @@ import aiohttp
 import websockets
 import json
 import pygame
+import os
 from edge_server_discover import EdgeServerDiscovery
 
 logging.basicConfig(
@@ -31,7 +32,8 @@ class Alarm:
         pygame.mixer.init()
         self.sound = None
         try:
-            self.sound = pygame.mixer.Sound("alarm.wav")
+            alarm_wav_path = os.path.join(os.path.dirname(__file__), "alarm.wav")
+            self.sound = pygame.mixer.Sound(alarm_wav_path)
         except Exception as e:
             logger.error(f"Failed to load alarm sound: {e}")
 
