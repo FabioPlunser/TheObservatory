@@ -72,7 +72,7 @@ class SimulatedCamera:
 
     @staticmethod
     def get_available_video_sets(
-        base_path: str = "data/videos/video_sets",
+        base_path: str = "data/video_sets",
     ) -> List[str]:
         """Get all available video sets"""
         if not os.path.exists(base_path):
@@ -94,7 +94,7 @@ class SimulatedCamera:
 
     @staticmethod
     def choose_random_videos(
-        base_path: str = "data/videos/video_sets", num_videos: int = 1
+        base_path: str = "data/video_sets", num_videos: int = 1
     ) -> List[VideoInfo]:
         """Choose random videos from available sets"""
         video_sets = SimulatedCamera.get_available_video_sets(base_path)
@@ -119,179 +119,81 @@ class SimulatedCamera:
 
     def get_ffmpeg_input_args(self, video_path: str) -> List[str]:
         """Get optimized FFmpeg input arguments"""
-        return [
-            "-re",
-            "-stream_loop",
-            "-1",  # Loop the video indefinitely
-            "-i",
-            video_path,
-            "-fflags",
-            "nobuffer",
-            "-flags",
-            "low_delay",
-            "-strict",
-            "experimental",
-            "-fps_mode",
-            "vfr",
-        ]
-
-    def get_ffmpeg_output_args(self, rtsp_url: str) -> List[str]:
-        """Get optimized FFmpeg output arguments with improved compatibility"""
-        # Try to detect NVIDIA GPU capabilities
-        try:
-            if self.gpu_vendor == "nvidia":
-                import subprocess
-
-                result = subprocess.run(
-                    ["ffmpeg", "-encoders"], capture_output=True, text=True
-                )
-                if "h264_nvenc" in result.stdout:
-                    logger.info(
-                        f"Using NVIDIA GPU encoding for camera {self.camera_id}"
-                    )
-                    return [
-                        "-c:v",
-                        "h264_nvenc",
-                        "-preset",
-                        "p1",  # Use P1 preset instead of ultrafast
-                        "-tune",
-                        "ll",  # Low latency tune
-                        "-b:v",
-                        "2M",  # Target bitrate
-                        "-maxrate",
-                        "4M",
-                        "-bufsize",
-                        "8M",
-                        "-g",
-                        "30",
-                        "-f",
-                        "rtsp",
-                        "-rtsp_transport",
-                        "tcp",
-                        rtsp_url,
-                    ]
-        except Exception as e:
-            logger.warning(f"NVIDIA GPU encoding not available: {e}")
-
-        # Fallback to CPU encoding with optimized settings
-        logger.info(f"Using CPU encoding for camera {self.camera_id}")
-        return [
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",  # Use veryfast instead of ultrafast for better stability
-            "-tune",
-            "zerolatency",
-            "-profile:v",
-            "baseline",
-            "-x264-params",
-            "nal-hrd=cbr:force-cfr=1",
-            "-b:v",
-            "1M",
-            "-maxrate",
-            "2M",
-            "-bufsize",
-            "2M",
-            "-g",
-            "30",
-            "-f",
-            "rtsp",
-            "-rtsp_transport",
-            "tcp",
-            rtsp_url,
-        ]
-
-        output_args = [
-            "-pix_fmt",
-            "yuv420p",
-            "-f",
-            "rtsp",
-            "-rtsp_transport",
-            "tcp",
-            "-muxdelay",
-            "0.1",
-        ]
-
-        # Add downscale filter
-        scale_filter = ["-vf", f"scale={self.frame_width}:{self.frame_height}"]
-        return encoder_args + quality_args + scale_filter + output_args + [rtsp_url]
-
-    async def start_streaming(
-        self, video_path: str, stop_event: Optional[asyncio.Event] = None
-    ):
-        """Start streaming a single video with improved error handling"""
-        if not os.path.exists(video_path):
-            logger.error(f"Video file not found: {video_path}")
-            return
-
-        try:
-            logger.info(
-                f"Starting video stream for camera {self.camera_id}: {video_path}"
-            )
-            # Add input format detection
-            probe_command = [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=width,height,r_frame_rate",
-                "-of",
-                "json",
-                video_path,
+        if not video_path:
+            # Generate test pattern if no video file
+            return [
+                "-f", "lavfi",
+                "-i", "testsrc=size=640x480:rate=30",
+                "-pix_fmt", "yuv420p",
+            ]
+        else:
+            return [
+                "-re",
+                "-stream_loop", "-1",
+                "-i", video_path,
             ]
 
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *probe_command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await process.communicate()
-                if process.returncode == 0:
-                    logger.info(
-                        f"Successfully probed video file for camera {self.camera_id}"
-                    )
+    def get_ffmpeg_output_args(self, rtsp_url: str) -> List[str]:
+        """Get optimized FFmpeg output arguments"""
+        common_args = [
+            "-f", "rtsp",
+            "-rtsp_transport", "tcp",
+        ]
 
-            except Exception as e:
-                logger.warning(
-                    f"Failed to probe video file for camera {self.camera_id}: {e}"
-                )
+        # Try to detect NVIDIA GPU capabilities
+        if self.gpu_vendor == "nvidia":
+            try:
+                encoder_args = [
+                    "-c:v", "h264_nvenc",
+                    "-preset", "p1",
+                    "-tune", "ll",
+                    "-zerolatency", "1",
+                    "-b:v", "2M",
+                    "-maxrate", "4M",
+                    "-bufsize", "8M",
+                    "-g", "30",
+                ]
+            except Exception:
+                encoder_args = self._get_cpu_encoder_args()
+        else:
+            encoder_args = self._get_cpu_encoder_args()
+
+        return encoder_args + common_args + [rtsp_url]
+
+    def _get_cpu_encoder_args(self) -> List[str]:
+        """Get CPU encoder arguments"""
+        return [
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-tune", "zerolatency",
+            "-profile:v", "baseline",
+            "-x264-params", "nal-hrd=cbr:force-cfr=1",
+            "-b:v", "2M",
+            "-maxrate", "2M",
+            "-bufsize", "2M",
+            "-g", "30",
+        ]
+
+    async def start_streaming(self, video_path: str = "", stop_event: Optional[asyncio.Event] = None):
+        """Start streaming with improved error handling"""
+        try:
+            logger.info(f"Starting video stream for camera {self.camera_id}")
+            input_args = self.get_ffmpeg_input_args(video_path)
+            output_args = self.get_ffmpeg_output_args(self.rtsp_url)
 
             ffmpeg_command = [
                 "ffmpeg",
-                "-hide_banner",  # Reduce logging noise
-                *self.get_ffmpeg_input_args(video_path),
-                *self.get_ffmpeg_output_args(self.rtsp_url),
+                "-hide_banner",
+                *input_args,
+                *output_args,
             ]
 
-            # Log the full command for debugging
-            logger.info(
-                f"FFmpeg command for camera {self.camera_id}: {' '.join(ffmpeg_command)}"
-            )
-
+            logger.info(f"FFmpeg command: {' '.join(ffmpeg_command)}")
             process = await asyncio.create_subprocess_exec(
                 *ffmpeg_command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-
-            async def log_output(stream, level):
-                while True:
-                    line = await stream.readline()
-                    if not line:
-                        break
-                    log_line = line.decode("utf-8").strip()
-                    if level == logging.ERROR and "Error" in log_line:
-                        logger.error(f"FFmpeg error: {log_line}")
-                    elif level == logging.INFO and (
-                        "fps" in log_line or "bitrate" in log_line
-                    ):
-                        logger.info(f"FFmpeg status: {log_line}")
-
-            stdout_task = asyncio.create_task(log_output(process.stdout, logging.INFO))
-            stderr_task = asyncio.create_task(log_output(process.stderr, logging.ERROR))
 
             try:
                 if stop_event:
@@ -301,16 +203,14 @@ class SimulatedCamera:
                         await asyncio.sleep(1)
                 else:
                     await process.wait()
-            except asyncio.CancelledError:
-                logger.info(f"Streaming cancelled for camera {self.camera_id}")
             finally:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    process.kill()
-                await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
-
+                if process.returncode is None:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        
         except Exception as e:
             logger.error(f"Streaming error for camera {self.camera_id}: {str(e)}")
 

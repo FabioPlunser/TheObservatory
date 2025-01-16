@@ -3,7 +3,10 @@ import aiohttp
 import logging
 import asyncio
 import platform
+import re
+import subprocess
 from edge_server_discover import EdgeServerDiscovery
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,6 +71,13 @@ class Camera:
         logger.info(f"Successfully discovered edge server at {self.edge_server_url}")
         return True
 
+    def fallback_to_test_pattern(self):
+        logger.warning("No integrated camera found, using test pattern fallback.")
+        return [
+            "-f", "lavfi",
+            "-i", "testsrc=size=640x480:rate=30",
+        ]
+
     def get_ffmpeg_input_args(self):
         """Get optimized FFmpeg input arguments for webcam"""
         base_args = [
@@ -106,15 +116,29 @@ class Camera:
                 "/dev/video0",
             ]
         else:  # Windows
-            return base_args + [
-                "-f",
-                "dshow",
-                "-rtbufsize",
-                "100M",
-                "-i",
-                "video=USB Video",
-            ]
-
+            list_cmd = ["ffmpeg", "-list_devices", "true", "-f", "dshow", "-i", "dummy"]
+            try:
+                result = subprocess.run(list_cmd, capture_output=True, text=True, shell=True)
+                devices = result.stderr
+                pattern = r'\[dshow @ .*?\] "(.*?)".*?\(video\)'
+                video_devices = re.findall(pattern, devices)
+                
+                if video_devices:
+                    camera_name = video_devices[0]
+                    logger.info(f"Selected camera: {camera_name}")
+                    return base_args + [
+                        "-f", "dshow",
+                        "-rtbufsize", "1024M",
+                        "-pixel_format", "yuyv422",  
+                        "-i", f"video={camera_name}"
+                    ]
+                else:
+                    logger.warning("No video devices found, falling back to test pattern.")
+                    return self.fallback_to_test_pattern()
+            except Exception as e:
+                logger.warning(f"DirectShow device enumeration failed: {str(e)}")
+                return self.fallback_to_test_pattern()
+            
     def get_ffmpeg_output_args(self, rtsp_url):
         """Get optimized FFmpeg output arguments with GPU support"""
         # Base quality settings

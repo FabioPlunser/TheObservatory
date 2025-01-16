@@ -57,38 +57,32 @@ class Router:
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
         @router.post("/api/update-cloud-url")
-        async def update_cloud_url(cloud_url: str):
+        async def update_cloud_url(*, cloud_url: str):  # Changed to use query parameter
             """Update the cloud URL for the NATS client"""
-
-            def is_ip_address(ip_str):
-                try:
-                    ipaddress.ip_address(ip_str)
-                    return True
-                except ValueError:
-                    return False
-
             try:
                 if not cloud_url:
                     raise HTTPException(status_code=400, detail="Cloud URL is required")
 
+                # Clean up URL if needed
                 if "http" in cloud_url:
                     cloud_url = cloud_url.replace("http", "nats")
-                    cloud_url = cloud_url + ":4222"
-                if "https" in cloud_url:
-                    cloud_url = cloud_url.replace("https", "nats")
-                    cloud_url = cloud_url + ":4222"
-                elif is_ip_address(cloud_url):
-                    cloud_url = "nats://" + cloud_url + ":4222"
+                if not cloud_url.startswith("nats://"):
+                    cloud_url = f"nats://{cloud_url}"
+                if not ":4222" in cloud_url:
+                    cloud_url = f"{cloud_url}:4222"
 
+                logger.info(f"Updating cloud URL to: {cloud_url}")
+
+                # Update in database first
                 await self.db.update_cloud_url(cloud_url)
-
+                
+                # Then update NATS client
                 await SharedNatsClient.update_url(cloud_url)
-
+                
                 return {"status": "success", "message": "Cloud URL updated"}
-
             except Exception as e:
                 logger.error(f"Error updating cloud URL: {e}")
-                raise HTTPException(status_code=500, detail="Error updating cloud URL")
+                raise HTTPException(status_code=500, detail=str(e))
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
