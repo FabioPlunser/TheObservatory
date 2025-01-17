@@ -9,7 +9,7 @@ SSH_DIR="$HOME/.ssh"
 
 test_aws_credentials() {
     # Test basic AWS CLI access
-    if ! aws sts get-caller-identity >/dev/null 2>&1; then
+    if ! /usr/local/bin/aws sts get-caller-identity >/dev/null 2>&1; then
         echo "❌ AWS CLI access failed"
         return 1
     fi
