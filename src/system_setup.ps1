@@ -106,29 +106,10 @@ function Install-Dependencies {
 function Setup-Frontend {
     # Get the root directory path correctly
     $rootDir = Split-Path -Parent (Split-Path -Parent $scriptPath)
-    $frontendPath = Join-Path -Path $rootDir -ChildPath "src\onPremise\server\website"
+    $frontendPath = Join-Path -Path (Get-Location) -ChildPath "onPremise\server\website"
 
     Write-Host "Current script path: $scriptPath"
     Write-Host "Root directory: $rootDir"
-    Write-Host "Looking for frontend at: $frontendPath"
-
-    if (-Not (Test-Path -Path $frontendPath)) {
-        # Try alternative path resolution
-        $altPath = Join-Path -Path (Get-Location) -ChildPath "onPremise\server\website"
-        Write-Host "Frontend not found, trying alternative path: $altPath"
-        
-        if (Test-Path -Path $altPath) {
-            $frontendPath = $altPath
-            Write-Host "✅ Found frontend at alternative path"
-        }
-        else {
-            Write-Host "❌ Frontend directory not found at either:"
-            Write-Host "   1. $frontendPath"
-            Write-Host "   2. $altPath"
-            Write-Host "Please ensure the frontend directory exists in one of these locations."
-            exit 1
-        }
-    }
 
     Write-Host "Setting up frontend at: $frontendPath"
     $spinner = Start-Job -ScriptBlock { animate_loading "Setting up frontend..." }

@@ -2,7 +2,7 @@
 variable "private_pem_key" {
   description = "Path to private key file"
   type        = string
-  default     = "" 
+  default     = "~/.ssh/theObservatory.pem"
 }
 
 variable "region" {
