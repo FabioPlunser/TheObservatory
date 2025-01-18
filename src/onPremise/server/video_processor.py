@@ -6,10 +6,8 @@ import logging
 import time
 import queue
 import os
-import asyncio
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
+from multiprocessing.synchronize import Event
 from person_tracker import OptimizedPersonTracker
 from reid_implementation import OptimizedCrossCameraTracker
 from concurrent.futures import ThreadPoolExecutor
@@ -19,20 +17,16 @@ from logging_config import setup_logger
 
 setup_logger()
 logger = logging.getLogger("VideoProcessor")
-
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 def process_frames_process(
     frame_queue: mp.Queue,
     output_queue: mp.Queue,
     company_id: str,
     camera_id: str,
-    stop_event: mp.Event,
+    stop_event: Event,
 ):
-    """Separate process for frame processing"""
-    thread_pool = None
-    import os
-
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    """Simple frame-by-frame processing"""
     try:
         # Initialize device
         if torch.cuda.is_available():
@@ -163,16 +157,13 @@ def process_frames_process(
             thread_pool.shutdown()
 
 
-def read_frames_process(rtsp_url: str, frame_queue: mp.Queue, stop_event: mp.Event):
+def read_frames_process(rtsp_url: str, frame_queue: mp.Queue, stop_event: Event):
     """Separate process for frame reading with enhanced RTSP handling"""
     cap = None
     retry_delay = 1.0
     max_retry_delay = 5.0
     max_consecutive_failures = 10
     failure_count = 0
-    import os
-
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
     while not stop_event.is_set():
         try:
@@ -257,9 +248,6 @@ def process_detections(
     timestamp: float,
 ) -> Optional[np.ndarray]:
     """Process detections for a single frame"""
-    import os
-
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
     try:
         # Update person tracker
         updated_tracks, new_tracks = person_tracker.update(frame, result)

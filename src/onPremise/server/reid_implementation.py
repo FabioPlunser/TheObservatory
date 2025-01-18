@@ -6,8 +6,6 @@ import threading
 import queue
 import logging
 import time
-import aiohttp
-import uuid
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
