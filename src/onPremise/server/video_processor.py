@@ -83,11 +83,6 @@ class VideoProcessor:
 
         self._resource_lock = threading.Lock()
 
-        self.frame_queues: Dict[str, mp.Queue] = {}
-        self.batch_queues: Dict[str, list] = defaultdict(list)
-        self.batch_timestamps: Dict[str, float] = {}
-        self.max_batch_wait = 0.1
-
         self.num_workers = max(1, mp.cpu_count() - 1)
         self.workers = []
         for _ in range(self.num_workers):
@@ -103,8 +98,6 @@ class VideoProcessor:
         self.frame_buffers[camera_id] = deque(maxlen=3)
         self.fps_counters[camera_id] = {"frames": 0, "last_check": time.time()}
 
-        self.frame_queues = mp.Queue(maxsize=self.max_queue_size)
-
         # Initialize person tracker
         self.person_trackers[camera_id] = OptimizedPersonTracker(
             company_id, camera_id, self.device
@@ -117,7 +110,7 @@ class VideoProcessor:
                 camera_id,
                 rtsp_url,
                 company_id,
-                self.frame_queues[cam],
+                self.frame_queue,
                 self.stop_events[camera_id],
             ),
             daemon=True,
