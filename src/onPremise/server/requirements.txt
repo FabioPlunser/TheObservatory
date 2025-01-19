@@ -3,9 +3,7 @@ uvicorn
 sqlalchemy
 aiosqlite
 psutil
-opencv-python-headless
-torch
-torchvision
+opencv-python==4.10.0.84
 ultralytics
 nats-py
 python-multipart
@@ -23,3 +21,4 @@ gdown
 tensorboard
 netifaces
 mediapipe
+ffmpeg

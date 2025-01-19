@@ -10,6 +10,7 @@ from typing import List, Optional
 from dataclasses import dataclass
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 
 logging.basicConfig(level=logging.ERROR)
@@ -29,9 +30,9 @@ class SimulatedCamera:
         self.edge_server_url = None
         self.rtsp_url = None
         self.is_running = False
-        self.frame_rate = 30  # Changed to 30fps
-        self.frame_width = 640  # Changed to 640
-        self.frame_height = 480  # Changed to 480
+        self.frame_rate = 15 
+        self.frame_width = 640  
+        self.frame_height = 480  
         self.os_type = platform.system().lower()
         self.gpu_vendor = self._detect_gpu()
         self.discovery = EdgeServerDiscovery()
@@ -95,6 +96,7 @@ class SimulatedCamera:
 
     def get_ffmpeg_input_args(self, video_path: str) -> List[str]:
         """Get optimized FFmpeg input arguments"""
+        logger.info(f"Video path: {video_path}")
         base_args = [
             "-fflags",
             "nobuffer",
@@ -115,9 +117,11 @@ class SimulatedCamera:
             return base_args + [
                 "-re",
                 "-stream_loop",
-                "-1",
+                "1",
                 "-i",
                 video_path,
+                "-filter:v",
+                f"setpts=PTS/{self.frame_rate}/TB",
             ]
 
     def get_ffmpeg_output_args(self, rtsp_url: str) -> List[str]:
@@ -130,14 +134,8 @@ class SimulatedCamera:
         ]
 
         quality_args = [
-            "-preset",
-            "ultrafast",
-            "-tune",
-            "zerolatency",
             "-profile:v",
             "baseline",
-            "-x264-params",
-            "keyint=30:min-keyint=30:scenecut=0:force-cfr=1",
             "-bufsize",
             "1M",
             "-maxrate",
@@ -150,24 +148,38 @@ class SimulatedCamera:
             encoder_args = [
                 "-c:v",
                 "h264_nvenc",
+                "-preset",
+                "fast",
                 "-b:v",
                 "2M",
                 "-maxrate",
                 "4M",
                 "-bufsize",
-                "8M",
+                "4M",
             ]
         elif self.gpu_vendor == "apple_silicon":
             encoder_args = [
                 "-c:v",
+                "-tune",
+                "zerolatency",
                 "h264_videotoolbox",
+                "-preset",
+                "ultrafast",
                 "-allow_sw",
                 "1",
                 "-realtime",
                 "1",
             ]
         else:
-            encoder_args = ["-c:v", "libx264", "-threads", "4"]
+            encoder_args = [
+                "-c:v", "libx264",
+                "-preset", "ultrafast", 
+                "-threads", "4"
+                "-tune",
+                "zerolatency",
+                "-x264-params",
+                "keyint=30:min-keyint=30:scenecut=0:force-cfr=1",
+                ]
 
         output_args = [
             "-pix_fmt",
@@ -351,16 +363,15 @@ async def main():
         for cam_videos in video_paths:
             cam_video_info = []
             for video_path in cam_videos:
-                set_name, video_name = video_path.split("/")
-                current_folder = os.getcwd()
-                full_path = os.path.join(
-                    current_folder, "data/video_sets", set_name, video_name
-                )
-                if os.path.exists(full_path):
-                    cam_video_info.append(VideoInfo(set_name, video_name, full_path))
+                path_obj = Path(video_path)
+                set_name = path_obj.parent.name
+                video_name = path_obj.name
+                base_path = Path.cwd() / "data" / "video_sets" / set_name / video_name
+                if base_path.exists():
+                    cam_video_info.append(VideoInfo(set_name, video_name, str(base_path.resolve())))
                 else:
-                    logger.warning(f"Video file not found: {full_path}")
-            if cam_video_info:  # Only add if there are valid videos
+                    logger.warning(f"Video file not found: {base_path.resolve()}")
+            if cam_video_info:
                 selected_videos.append(cam_video_info)
 
         if not selected_videos:
