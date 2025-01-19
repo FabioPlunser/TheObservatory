@@ -265,27 +265,27 @@ class OptimizedPersonTracker:
                 return
 
             # Upload face image
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.put(
-                        response["url"],
-                        data=img_bytes,
-                        headers={"Content-Type": "*"},
-                        timeout=30,
-                    ) as resp:
-                        if resp.status != 200:
-                            error_text = await resp.text()
-                            logger.error(f"Failed to upload face image: {error_text}")
-                            track.recognition_status = "pending"
-                            return
+            # try:
+                # async with aiohttp.ClientSession() as session:
+                #     async with session.put(
+                #         response["url"],
+                #         data=img_bytes,
+                #         headers={"Content-Type": "*"},
+                #         timeout=30,
+                #     ) as resp:
+                #         if resp.status != 200:
+                #             error_text = await resp.text()
+                #             logger.error(f"Failed to upload face image: {error_text}")
+                #             track.recognition_status = "pending"
+                #             return
 
-                        logger.info(
-                            f"Successfully uploaded face image for face_id {track.face_id}"
-                        )
-            except Exception as e:
-                logger.error(f"Error uploading face image: {e}")
-                track.recognition_status = "pending"
-                return
+                #         logger.info(
+                #             f"Successfully uploaded face image for face_id {track.face_id}"
+                #         )
+            # except Exception as e:
+            #     logger.error(f"Error uploading face image: {e}")
+            #     track.recognition_status = "pending"
+            #     return
 
             # Execute recognition
             try:

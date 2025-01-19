@@ -20,6 +20,7 @@ setup_logger()
 logger = logging.getLogger("VideoProcessor")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
+
 class VideoProcessor:
     """
     Shared video processor that handles multiple cameras efficiently
@@ -67,13 +68,6 @@ class VideoProcessor:
         self.stop_events = {}
         self.person_trackers = {}
 
-        self.num_workers = max(1, mp.cpu_count() - 1)
-        self.workers = []
-        for _ in range(self.num_workers):
-            worker = threading.Thread(target=self._detection_worker, daemon=True)
-            worker.start()
-            self.workers.append(worker)
-
         self.fps_counters = {}
         self.monitoring_thread = threading.Thread(
             target=self._monitor_performance, daemon=True
@@ -89,6 +83,18 @@ class VideoProcessor:
 
         self._resource_lock = threading.Lock()
 
+        self.frame_queues: Dict[str, mp.Queue] = {}
+        self.batch_queues: Dict[str, list] = defaultdict(list)
+        self.batch_timestamps: Dict[str, float] = {}
+        self.max_batch_wait = 0.1
+
+        self.num_workers = max(1, mp.cpu_count() - 1)
+        self.workers = []
+        for _ in range(self.num_workers):
+            worker = threading.Thread(target=self._detection_worker, daemon=True)
+            worker.start()
+            self.workers.append(worker)
+
     def add_camera(self, camera_id: str, rtsp_url: str, company_id: str):
         """Add a new camera stream."""
         self.stop_events[camera_id] = threading.Event()
@@ -96,6 +102,8 @@ class VideoProcessor:
         self.output_queues[camera_id] = mp.Queue(maxsize=self.max_queue_size)
         self.frame_buffers[camera_id] = deque(maxlen=3)
         self.fps_counters[camera_id] = {"frames": 0, "last_check": time.time()}
+
+        self.frame_queues = mp.Queue(maxsize=self.max_queue_size)
 
         # Initialize person tracker
         self.person_trackers[camera_id] = OptimizedPersonTracker(
@@ -109,7 +117,7 @@ class VideoProcessor:
                 camera_id,
                 rtsp_url,
                 company_id,
-                self.frame_queue,
+                self.frame_queues[cam],
                 self.stop_events[camera_id],
             ),
             daemon=True,
@@ -182,25 +190,73 @@ class VideoProcessor:
         frame_queue: mp.Queue,
         stop_event: threading.Event,
     ):
+        max_retries: int = (3,)
+        retry_delay: float = (2.0,)
+        exponential_backoff: bool = True
+
         cap = None
         frame_counter = 0
         last_frame_time = time.time()
         frame_interval = 1.0 / 30.0  # Target 30 FPS
+        retry_count = 0
 
         logger.info(f"Starting frame reader for camera {camera_id}")
+
+        def initialize_capture():
+            nonlocal cap, retry_count
+
+            if cap is not None:
+                cap.release()
+                cap = None
+
+            current_delay = retry_delay * (2**retry_count if exponential_backoff else 1)
+
+            try:
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+                cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+                logger.info(f"Opened RTSP stream: {rtsp_url}")
+
+                if not cap.isOpened():
+                    retry_count += 1
+                    logger.warning(
+                        f"Attempt {retry_count}/{max_retries} failed to open RTSP stream: {rtsp_url}"
+                    )
+                    if retry_count < max_retries:
+                        logger.info(f"Retrying in {current_delay:.1f} seconds...")
+                        time.sleep(current_delay)
+                        return False
+                    else:
+                        logger.error(
+                            f"Failed to open RTSP stream after {max_retries} attempts: {rtsp_url}"
+                        )
+                        return False
+
+                logger.info(f"Successfully opened RTSP stream: {rtsp_url}")
+                retry_count = 0  # Reset retry count on successful connection
+                return True
+
+            except Exception as e:
+                retry_count += 1
+                logger.error(
+                    f"Error initializing capture (attempt {retry_count}/{max_retries}): {e}"
+                )
+                if retry_count < max_retries:
+                    logger.info(f"Retrying in {current_delay:.1f} seconds...")
+                    time.sleep(current_delay)
+                    return False
+                return False
 
         while not stop_event.is_set():
             try:
                 if cap is None or not cap.isOpened():
-                    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-                    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-                    logger.info(f"Opened RTSP stream: {rtsp_url}")
-
-                    if not cap.isOpened():
-                        logger.error(f"Failed to open RTSP stream: {rtsp_url}")
-                        time.sleep(1)
+                    if not initialize_capture():
+                        if retry_count >= max_retries:
+                            logger.error(
+                                "Maximum retry attempts reached. Stopping frame reader."
+                            )
+                            break
                         continue
 
                 ret, frame = cap.read()
@@ -223,6 +279,7 @@ class VideoProcessor:
                 _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
 
                 try:
+                    # alwas push newest frame to the queue
                     frame_queue.put_nowait(
                         {
                             "frame": buffer.tobytes(),
@@ -233,7 +290,6 @@ class VideoProcessor:
                     )
                     last_frame_time = current_time
                 except Exception as e:
-                    logger.error(f"Error queuing frame: {e}")
                     continue
 
                 pass
