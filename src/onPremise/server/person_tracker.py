@@ -3,14 +3,11 @@ import cv2
 import time
 import colorsys
 import torch
-import threading
-import queue
 import logging
 import aiohttp
 import mediapipe as mp
 import asyncio
 import uuid
-
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -21,7 +18,7 @@ from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from logging_config import setup_logger
-from nats_client import SharedNatsClient, NatsClient, Commands
+from nats_client import NatsClient, Commands
 from reid_implementation import OptimizedCrossCameraTracker
 from datetime import datetime
 from database import Database

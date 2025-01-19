@@ -17,12 +17,12 @@ The on premmise server handels the following
 To run the On Premis server do the following:
 (linux) 
 ```bash 
-cd src/onPremis 
+cd src
 ./run.sh
 ```
 (windows)
 ```bash
-cd src/onPremis
+cd src
 run.ps1
 ```
 For the website to work a .env file is required in the src\onPremise\server\website\ folder with the following content:
@@ -39,6 +39,9 @@ from the wiseNet Dataset(src\data\video_sets\...).
 Python 3.12 is required to run the project.
 
 This will do everything automatically for you.
+
+
+The information below are not up to date at the moment.
 
 Or else for `deveolpment` you can do the following: 
 

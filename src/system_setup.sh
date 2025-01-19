@@ -191,7 +191,7 @@ start_server() {
     fi
 
     echo "⏳ Waiting for server to initialize..."
-    max_wait_time=20
+    max_wait_time=40
     waited=0
     server_started=false
 

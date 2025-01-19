@@ -18,7 +18,7 @@ from rtsp_reader import RTSPReader
 
 setup_logger()
 logger = logging.getLogger("VideoProcessor")
-
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 class VideoProcessor:
     """

@@ -9,7 +9,7 @@ SSH_DIR="$HOME/.ssh"
 
 test_aws_credentials() {
     # Test basic AWS CLI access
-    if ! aws sts get-caller-identity >/dev/null 2>&1; then
+    if ! /usr/local/bin/aws sts get-caller-identity >/dev/null 2>&1; then
         echo "❌ AWS CLI access failed"
         return 1
     fi
@@ -139,10 +139,10 @@ destroy_terraform() {
 }
 
 get_nats_ip() {
-    echo "🔍 Checking for existing NATS instance..."
+    #echo "🔍 Checking for existing NATS instance..."
     pushd terraform >/dev/null
     if NATS_IP=$(terraform output -raw nats_instance_public_ip 2>/dev/null); then
-        echo "✅ Found existing NATS instance"
+        #echo "✅ Found existing NATS instance"
         echo "$NATS_IP"
         return 0
     else

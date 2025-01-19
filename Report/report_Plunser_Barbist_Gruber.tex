@@ -8,6 +8,7 @@
 \usepackage{textcomp}
 \usepackage{hyperref}
 \usepackage{xcolor}
+\usepackage{tabulary}
 \def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
     T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
 \begin{document}
@@ -203,24 +204,102 @@ The system requires significant parallel processing capabilities to handle multi
 
 \section{Evaluation}
 \label{sec:evaluation}
+Sadly this section is still incomplete and will be updated in the final report.
 Our evaluation focuses on three key aspects:
 
 \begin{itemize}
       \item \textbf{Processing Performance:} 
             \begin{itemize}
-                  \item YOLOv8n achieves real-time detection ($<$15 FPS) on modern CPUs
-                  \item Hardware acceleration provides improved performance on GPUs and Apple Silicon
-                  \item Frame skipping reduces CPU load while maintaining detection accuracy
-            \end{itemize}
-      \item \textbf{Scalability:}
-            \begin{itemize}
-                  \item Successfully tested with simultaneous camera streams
-                  \item Efficient resource utilization through multiprocessing
-            \end{itemize}
-      \item \textbf{Reliability:}
-            \begin{itemize}
-                  \item DoTo
-            \end{itemize}
+	\item Successfully processed multiple video streams concurrently(6 cameras + 1 Webcam), but at this but the frame rate is not optimal.
+	\item Detect new people in less than 2 seconds  
+		\item Successfully processed multiple video streams concurrently(6 cameras + 1 Webcam), but at this but the frame rate is not optimal.
+	\item Detect new people in less than 2 seconds  
+\end{itemize}
+
+\item \textbf{Scalability:}
+\begin{itemize}
+	\item Connecting additional cameras should be straightforward
+	\item The Nats messaging system allows for easy scaling of the system
+\end{itemize}
+\item \textbf{Reliability:}
+\begin{itemize}
+	\item Automatic stream recovery and reconnection
+	\item Start scripts for easy deployment on new devices
+\end{itemize}
+\end{itemize}
+\subsection{Measurements}
+\begin{itemize}
+	\item 24 Images and 5 parallel:
+	\begin{table}[h]
+		\begin{tabulary}{\textwidth}{|C|C|C|C|C|C|}
+			\hline
+			\textbf{Name} &
+			\textbf{min.} &
+			\textbf{max.} &
+			\textbf{mean} &
+			\textbf{median} &
+			\textbf{stddev}
+			\\\hline
+			Total processing time & 0.675 & 1.360 & 0.869 & 0.794 & 0.182 \\\hline
+			Presigned url request time & 0.120 & 0.194 & 0.143 & 0.133 & not measured \\\hline
+			Image upload time & 0.499 & 1.161 & 0.720 & 0.657 & not measured \\\hline
+			Recognition time & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
+		\end{tabulary} 
+	\end{table}
+	
+	\item 	 24 Images and 24 parallel:
+	\begin{table}[h]
+		\begin{tabulary}{\textwidth}{|C|C|C|C|C|C|}
+			\hline
+			\textbf{Name} &
+			\textbf{min.} &
+			\textbf{max.} &
+			\textbf{mean} &
+			\textbf{median} &
+			\textbf{stddev}
+			\\\hline
+			Total processing time & 0.087 & 1.648 & 1.224 & 1.189 & 0.176 \\\hline
+			Presigned url request time & 0.214 & 0.349 & 0.266 & 0.270 & not measured \\\hline
+			Image upload time & 0.609 & 1.372 & 0.954 & 0.933 & not measured \\\hline
+			Recognition time & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
+		\end{tabulary} 
+	\end{table}
+	
+	
+	\item 	 100 Images and 100 parallel:
+	\begin{table}[h]
+		\begin{tabulary}{\textwidth}{|C|C|C|C|C|C|}
+			\hline
+			\textbf{Name} &
+			\textbf{min.} &
+			\textbf{max.} &
+			\textbf{mean} &
+			\textbf{median} &
+			\textbf{stddev}
+			\\\hline
+			Total processing time & 1.162 & 8.845 & 5.962 & 7.779 & 3.023 \\\hline
+			Presigned url request time & 0.509 & 1.659 & 1.089 & 1.061 & not measured \\\hline
+			Image upload time & 0.588 & 7.720 & 4.869 & 6.447 & not measured \\\hline
+			Recognition time & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
+		\end{tabulary} 
+	\end{table}
+	\item 	 200 Images and 200 parallel:
+	\begin{table}[h]
+		\begin{tabulary}{\textwidth}{|C|C|C|C|C|C|}
+			\hline
+			\textbf{Name} &
+			\textbf{min.} &
+			\textbf{max.} &
+			\textbf{mean} &
+			\textbf{median} &
+			\textbf{stddev}
+			\\\hline
+			Total processing time & 1.487 & 8.254 & 5.370 & 5.580 & 2.016 \\\hline
+			Presigned url request time & 0.820 & 2.920 & 1.354 & 1.046 & not measured \\\hline
+			Image upload time & 0.649 & 6.426 & 4.012 & 4.507 & not measured \\\hline
+			Recognition time & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
+		\end{tabulary} 
+	\end{table}
 \end{itemize}
 
 \end{document}
