@@ -29,27 +29,30 @@ class SimulatedCamera:
         self.edge_server_url = None
         self.rtsp_url = None
         self.is_running = False
-        self.frame_rate = 5
-        self.frame_width = 640*2
-        self.frame_height = 480*2
+        self.frame_rate = 30  # Changed to 30fps
+        self.frame_width = 640  # Changed to 640
+        self.frame_height = 480  # Changed to 480
         self.os_type = platform.system().lower()
         self.gpu_vendor = self._detect_gpu()
         self.discovery = EdgeServerDiscovery()
         self.executor = ThreadPoolExecutor(max_workers=6)  # Limit to 6 threads
 
     def _detect_gpu(self):
-        """Detect available GPU for encoding"""
+        """Detect available GPU for encoding."""
         try:
             if self.os_type == "darwin":
                 import subprocess
+
                 result = subprocess.run(
                     ["sysctl", "-n", "machdep.cpu.brand_string"],
                     capture_output=True,
                     text=True,
                 )
-                return "apple_silicon" if "Apple" in result.stdout else None
+                if "Apple" in result.stdout:
+                    return "apple_silicon"
             elif self.os_type in ["linux", "windows"]:
                 import subprocess
+
                 result = subprocess.run(
                     ["nvidia-smi"],
                     capture_output=True,
@@ -76,7 +79,11 @@ class SimulatedCamera:
         if not os.path.exists(base_path):
             logger.error(f"Video sets directory not found: {base_path}")
             return []
-        return [d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))]
+        return [
+            d
+            for d in os.listdir(base_path)
+            if os.path.isdir(os.path.join(base_path, d))
+        ]
 
     @staticmethod
     def get_videos_in_set(set_path: str) -> List[str]:
@@ -88,77 +95,104 @@ class SimulatedCamera:
 
     def get_ffmpeg_input_args(self, video_path: str) -> List[str]:
         """Get optimized FFmpeg input arguments"""
+        base_args = [
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+        ]
+
         if not video_path:
-            # Generate test pattern if no video file
             return [
-                "-f", "lavfi",
-                "-i", "testsrc=size=640x480:rate=1",  
-                "-pix_fmt", "yuv420p",
+                "-f",
+                "lavfi",
+                "-i",
+                f"testsrc=size={self.frame_width}x{self.frame_height}:rate={self.frame_rate}",
+                "-pix_fmt",
+                "yuv420p",
             ]
         else:
-            return [
+            return base_args + [
                 "-re",
-                "-stream_loop", "-1",
-                "-i", video_path,
-                "-r", "1",  
+                "-stream_loop",
+                "-1",
+                "-i",
+                video_path,
             ]
 
     def get_ffmpeg_output_args(self, rtsp_url: str) -> List[str]:
-        """Get optimized FFmpeg output arguments"""
-        common_args = [
-            "-f", "rtsp",
-            "-rtsp_transport", "tcp",
-            "-r", "1",  
+        """Get optimized FFmpeg output arguments with GPU support."""
+        scaling_args = [
+            "-vf",
+            f"scale={self.frame_width}:{self.frame_height}",
+            "-r",
+            f"{self.frame_rate}",
         ]
 
-        # Try to detect NVIDIA GPU capabilities
+        quality_args = [
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "zerolatency",
+            "-profile:v",
+            "baseline",
+            "-x264-params",
+            "keyint=30:min-keyint=30:scenecut=0:force-cfr=1",
+            "-bufsize",
+            "1M",
+            "-maxrate",
+            "2M",
+            "-g",
+            "30",
+        ]
+
         if self.gpu_vendor == "nvidia":
-            try:
-                encoder_args = [
-                    "-c:v", "h264_nvenc",
-                    "-preset", "fast",  # Use a more efficient preset
-                    "-tune", "ll",
-                    "-zerolatency", "1",
-                    "-b:v", "2M",  # Reduce bitrate
-                    "-maxrate", "2M",
-                    "-bufsize", "2M",
-                    "-g", "5",
-                ]
-            except Exception:
-                encoder_args = self._get_cpu_encoder_args()
+            encoder_args = [
+                "-c:v",
+                "h264_nvenc",
+                "-b:v",
+                "2M",
+                "-maxrate",
+                "4M",
+                "-bufsize",
+                "8M",
+            ]
         elif self.gpu_vendor == "apple_silicon":
             encoder_args = [
-                "-c:v", "h264_videotoolbox",
-                "-allow_sw", "1",
-                "-realtime", "1",
+                "-c:v",
+                "h264_videotoolbox",
+                "-allow_sw",
+                "1",
+                "-realtime",
+                "1",
             ]
         else:
-            encoder_args = self._get_cpu_encoder_args()
+            encoder_args = ["-c:v", "libx264", "-threads", "4"]
 
-        return encoder_args + common_args + [rtsp_url]
-
-    def _get_cpu_encoder_args(self) -> List[str]:
-        """Get CPU encoder arguments"""
-        return [
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-tune", "ll",
-            "-profile:v", "baseline",
-            "-x264-params", "nal-hrd=cbr:force-cfr=1",
-            "-b:v", "2M",
-            "-maxrate", "2M",
-            "-bufsize", "2M",
-            "-g", "5",
+        output_args = [
+            "-pix_fmt",
+            "yuv420p",
+            "-f",
+            "rtsp",
+            "-rtsp_transport",
+            "tcp",
+            rtsp_url,
         ]
 
-    async def start_streaming(self, video_path: str = "", stop_event: Optional[asyncio.Event] = None):
+        return scaling_args + encoder_args + quality_args + output_args
+
+    async def start_streaming(
+        self, video_path: str = "", stop_event: Optional[asyncio.Event] = None
+    ):
         """Start streaming with improved error handling"""
         if not os.path.exists(video_path):
             logger.error(f"Video file not found: {video_path}")
             return
-            
+
         try:
-            logger.info(f"Starting video stream for camera {self.camera_id} with video {video_path}")
+            logger.info(
+                f"Starting video stream for camera {self.camera_id} with video {video_path}"
+            )
             input_args = self.get_ffmpeg_input_args(video_path)
             output_args = self.get_ffmpeg_output_args(self.rtsp_url)
 
@@ -191,7 +225,9 @@ class SimulatedCamera:
                 if stop_event:
                     while not stop_event.is_set():
                         if process.returncode is not None:
-                            logger.error(f"FFmpeg process exited with code {process.returncode}")
+                            logger.error(
+                                f"FFmpeg process exited with code {process.returncode}"
+                            )
                             break
                         await asyncio.sleep(1)
                     process.terminate()
@@ -255,7 +291,9 @@ class SimulatedCamera:
             return False
 
 
-async def run_camera(video_infos: List[VideoInfo], stop_event: asyncio.Event, camera_index: int):
+async def run_camera(
+    video_infos: List[VideoInfo], stop_event: asyncio.Event, camera_index: int
+):
     """Run a single camera instance"""
     camera = SimulatedCamera()
     try:
@@ -271,10 +309,14 @@ async def run_camera(video_infos: List[VideoInfo], stop_event: asyncio.Event, ca
                     for video_info in video_infos:
                         if stop_event.is_set():
                             break
-                        logger.info(f"Camera {camera_index} streaming video {video_info.video_name}")
+                        logger.info(
+                            f"Camera {camera_index} streaming video {video_info.video_name}"
+                        )
                         await camera.start_streaming(video_info.full_path, stop_event)
-                    
-                    logger.info(f"Camera {camera_index} completed one full sequence, starting over")
+
+                    logger.info(
+                        f"Camera {camera_index} completed one full sequence, starting over"
+                    )
                     # Loop will start over from the beginning after playing all videos
     except Exception as e:
         logger.error(f"Error running camera {camera.camera_id}: {e}")
@@ -296,17 +338,24 @@ async def main():
                 # Special handling for camera 6 (index 5)
                 if cam_num == 5:  # Camera 6
                     if set_num >= 5:  # Only sets 5-11 for camera 6
-                        video_paths[cam_num].append(f"set_{set_num}/video{set_num}_{cam_num + 1}.avi")
+                        video_paths[cam_num].append(
+                            f"set_{set_num}/video{set_num}_{cam_num + 1}.avi"
+                        )
                 else:  # Other cameras (1-5)
-                    video_paths[cam_num].append(f"set_{set_num}/video{set_num}_{cam_num + 1}.avi")
+                    video_paths[cam_num].append(
+                        f"set_{set_num}/video{set_num}_{cam_num + 1}.avi"
+                    )
 
         # Convert paths to VideoInfo objects and verify files exist
         selected_videos = []
         for cam_videos in video_paths:
             cam_video_info = []
             for video_path in cam_videos:
-                set_name, video_name = video_path.split('/')
-                full_path = os.path.join("data/video_sets", set_name, video_name)
+                set_name, video_name = video_path.split("/")
+                current_folder = os.getcwd()
+                full_path = os.path.join(
+                    current_folder, "data/video_sets", set_name, video_name
+                )
                 if os.path.exists(full_path):
                     cam_video_info.append(VideoInfo(set_name, video_name, full_path))
                 else:

@@ -1,3 +1,9 @@
+import asyncio
+import aiohttp
+import logging
+import uuid
+import ipaddress
+
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -13,14 +19,10 @@ from database import Database
 from nats_client import SharedNatsClient, Commands
 from logging_config import setup_logger
 from typing import Optional
+from web_socket_manager import WebSocketManager
 
-import asyncio
-import aiohttp
-import logging
-import uuid
-import ipaddress
+import os
 
-import os 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 
@@ -46,6 +48,7 @@ class Router:
 
     def create_routes(self) -> APIRouter:
         router = APIRouter()
+        ws_manager = WebSocketManager(self.edge_server)
 
         # ----------------------------------------------------------------------------
         # ----------------------------------------------------------------------------
@@ -77,10 +80,10 @@ class Router:
 
                 # Update in database first
                 await self.db.update_cloud_url(cloud_url)
-                
+
                 # Then update NATS client
                 await SharedNatsClient.update_url(cloud_url)
-                
+
                 return {"status": "success", "message": "Cloud URL updated"}
             except Exception as e:
                 logger.error(f"Error updating cloud URL: {e}")
@@ -136,43 +139,32 @@ class Router:
                 return
 
             try:
-                await websocket.accept()
+                await ws_manager.connect(websocket, camera_id)
 
+                # Keep connection alive and handle client messages
                 while True:
                     try:
-                        # Check for client messages (non-blocking)
+                        data = await asyncio.wait_for(
+                            websocket.receive_text(), timeout=1.0
+                        )
+                        if data == "close":
+                            break
+                    except asyncio.TimeoutError:
+                        # Check if connection is still alive
                         try:
-                            data = await asyncio.wait_for(
-                                websocket.receive_text(), timeout=0.001
-                            )
-                            if data == "close":
-                                break
-                        except asyncio.TimeoutError:
-                            pass
-
-                        # Get and send frame
-                        # if not self.edge_server.cameras[camera_id]:
-                        #     break
-
-                        frame = await self.edge_server.get_frame(camera_id)
-                        if frame is not None:
-                            await websocket.send_bytes(frame)
-
-                        self.edge_server.cameras[camera_id][
-                            "last_seen"
-                        ] = datetime.now()
-
-                        # await asyncio.sleep(0.033)
-
+                            await websocket.send_bytes(b"")  # Ping to check connection
+                        except WebSocketDisconnect:
+                            break
                     except WebSocketDisconnect:
                         break
                     except Exception as e:
-                        logger.error(f"Error in WebSocket loop: {e}")
+                        logger.error(f"Error receiving WebSocket message: {e}")
                         break
 
             except Exception as e:
-                logger.error(f"WebSocket error: {e}")
+                logger.error(f"WebSocket error for camera {camera_id}: {e}")
             finally:
+                await ws_manager.disconnect(camera_id)
                 logger.info(f"WebSocket connection closed for camera {camera_id}")
 
         # ----------------------------------------------------------------------------
@@ -267,8 +259,9 @@ class Router:
             try:
                 logger.info(f"Starting deletion of camera {camera_id}")
 
+                await ws_manager.disconnect(camera_id)
                 # First stop the video processor if running
-                if camera_id in self.edge_server.processors:
+                if camera_id in self.edge_server.cameras:
                     logger.info(f"Stopping video processor for camera {camera_id}")
                     await self.edge_server.stop_camera_stream(camera_id)
 
@@ -276,6 +269,7 @@ class Router:
                 if camera_id in self.edge_server.cameras:
                     logger.info(f"Removing camera {camera_id} from edge server")
                     del self.edge_server.cameras[camera_id]
+                    self.edge_server.video_processor
 
                 # Finally remove from database
                 logger.info(f"Removing camera {camera_id} from database")

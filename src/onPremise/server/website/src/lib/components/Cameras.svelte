@@ -34,7 +34,7 @@
 
 <div class="mx-4">
   {#if cameras.length > 0}
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
       {#each cameras as camera (camera.id)}
         <div class="rounded-lg p-4 bg-base-200 shadow-lg">
           <div class="mb-2 flex justify-between items-center relative">

@@ -17,12 +17,14 @@
 
     ws.onmessage = function (event) {
       const blob = new Blob([event.data], { type: "image/jpeg" });
-      const url = URL.createObjectURL(blob);
-      if (imgElement) {
-        imgElement.onload = () => {
-          URL.revokeObjectURL(url); // Revoke only after the image has loaded
-        };
-        imgElement.src = url;
+      if (blob.size > 0) {
+        const url = URL.createObjectURL(blob);
+        if (imgElement) {
+          imgElement.onload = () => {
+            URL.revokeObjectURL(url); // Revoke only after the image has loaded
+          };
+          imgElement.src = url;
+        }
       }
     };
 

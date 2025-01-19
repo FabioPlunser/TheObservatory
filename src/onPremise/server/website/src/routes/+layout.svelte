@@ -17,25 +17,29 @@
   async function update_url(e) {
     e.preventDefault();
     let res = await update_cloud_url(url);
-
     let data = await res.json();
     await getCompany();
     location.reload();
   }
   onMount(async () => {
     let res = await getCompany();
+    if (!res.ok) {
+      company.value = undefined;
+      alert("Invalid URL");
+      return;
+    }
     let data = await res.json();
     if (data?.company) {
       company.value = data.company;
     }
-    setInterval(getActiveAlarm, 1000);
+    // setInterval(getActiveAlarm, 1000);
   });
 
-  async function getActiveAlarm() {
-    let res = await fetch(`${SERVER_URL}/api/alarm`);
-    let data = await res.json();
-    alarms = data.alarms;
-  }
+  // async function getActiveAlarm() {
+  //   let res = await fetch(`${SERVER_URL}/api/alarm`);
+  //   let data = await res.json();
+  //   alarms = data.alarms;
+  // }
 
   async function dismissAlarm() {
     try {

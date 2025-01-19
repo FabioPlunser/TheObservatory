@@ -1,18 +1,19 @@
-from zeroconf import ServiceInfo, Zeroconf
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-from video_processor import VideoProcessor
-from typing import Dict, Set
-from database import Database
-from nats_client import SharedNatsClient, Commands
-from logging_config import setup_logger
-
 import socket
 import platform
 import asyncio
 import logging
 import multiprocessing
 import json
+
+
+from zeroconf import ServiceInfo, Zeroconf
+from datetime import datetime
+from typing import Dict, Set
+from database import Database
+from nats_client import SharedNatsClient, Commands
+from logging_config import setup_logger
+from video_processor import VideoProcessor
+from concurrent.futures import ThreadPoolExecutor
 
 import os
 
@@ -26,16 +27,17 @@ class EdgeServer:
     def __init__(self, port):
         self.cameras = {}
         self.alarms = {}
-        self.processors: Dict[str, VideoProcessor] = {}
-        self.executor = ThreadPoolExecutor()
         self.port = port
-        self.reader_queue = multiprocessing.Queue()
         self.db = Database()
         self.nats_client = SharedNatsClient.get_instance()
         self.active_streams = set()
 
         self._bucket_init_task = None
         self._bucket_init_running = False
+
+        self.video_processor = VideoProcessor()
+
+        self.executor = ThreadPoolExecutor()
 
     async def init_bucket(self):
         """Start the bucket initialization background task"""
@@ -44,23 +46,6 @@ class EdgeServer:
             return
 
         # Check for NATS connection first
-        nats_client = SharedNatsClient.get_instance()
-        if not nats_client or not nats_client._connected:
-            logger.info("NATS client not connected, skipping bucket initialization")
-            return
-
-        company_id = await self.db.get_company_id()
-        cloud_url = await self.db.get_cloud_url()
-
-        if not cloud_url:
-            logger.info("No cloud URL configured, skipping bucket initialization")
-            return
-
-        if not company_id:
-            logger.error("No company ID found, skipping bucket initialization")
-            return
-
-        logger.info("Starting bucket initialization task")
         self._bucket_init_running = True
         self._bucket_init_task = asyncio.create_task(self._bucket_init_retry())
 
@@ -286,16 +271,11 @@ class EdgeServer:
         """Start streaming for a camera"""
         try:
             # Stop existing processor if any
-            await self.stop_camera_stream(camera_id)
             company_id = await self.db.get_company_id()
-            # Create and start new processor
-            processor = VideoProcessor(rtsp_url, company_id, camera_id)
-            self.processors[camera_id] = processor
-            processor.start()
+            self.video_processor.add_camera(camera_id, rtsp_url, company_id)
 
-            # Update camera status
             self.cameras[camera_id] = {
-                "rtsp_url": rtsp_url,
+                "rstp_url": rtsp_url,
                 "last_seen": datetime.now(),
                 "status": "streaming",
             }
@@ -304,64 +284,28 @@ class EdgeServer:
 
         except Exception as e:
             logger.error(f"Error starting camera stream: {e}")
-            # Clean up on error
-            if camera_id in self.processors:
-                self.processors[camera_id].stop()
-                del self.processors[camera_id]
             raise
 
     async def stop_camera_stream(self, camera_id: str):
-        """Stop streaming for a camera and clean up all resources"""
-        logger.info(f"Stopping camera stream for {camera_id}")
+        """Stop streaming for a camera"""
+        logger.info(f"Stopping camera stream {camera_id}")
 
         try:
-            # Stop and cleanup video processor
-            if camera_id in self.processors:
-                try:
-                    processor = self.processors[camera_id]
-                    processor.stop()  # This will stop both reader and YOLO processes
-                    del self.processors[camera_id]
-                    logger.info(f"Video processor stopped for camera {camera_id}")
-                except Exception as e:
-                    logger.error(
-                        f"Error stopping video processor for camera {camera_id}: {e}"
-                    )
-                    raise
-
-            # Update camera status if exists
             if camera_id in self.cameras:
                 self.cameras[camera_id]["status"] = "stopped"
 
+            self.video_processor.remove_camera(camera_id)
+            # Camera will be stopped when processor is stopped
             logger.info(f"Successfully stopped camera stream {camera_id}")
 
         except Exception as e:
             logger.error(f"Error in stop_camera_stream: {e}")
-            raise  # Re-raise to handle in the route
-        finally:
-            # Make absolutely sure we clean up processors
-            if camera_id in self.processors:
-                try:
-                    del self.processors[camera_id]
-                except:
-                    pass
+            raise
 
     async def get_frame(self, camera_id: str) -> bytes:
         """Get the latest frame for a camera"""
         try:
-            processor = self.processors.get(camera_id)
-            if not processor:
-                logger.error(f"No processor found for camera {camera_id}")
-                del self.processors[camera_id]
-                del self.cameras[camera_id]
-                await self.db.delete_camera(camera_id)
-                return None
-
-            frame = processor.get_latest_frame()
-            if frame is not None:
-                # Update last seen timestamp
-                self.cameras[camera_id]["last_seen"] = datetime.now()
-
-            return frame
+            return self.video_processor.get_frame(camera_id)
 
         except Exception as e:
             logger.error(f"Error getting frame: {e}")
@@ -404,29 +348,23 @@ class EdgeServer:
             """update that the certain camera has an unknown face. So that the correct videostream can be shown on the website"""
             await self.db.update_camera_unknown_face(camera_id, True, unknown_face_url)
 
-            if camera_id in self.processors:
-                processor = self.processors[camera_id]
-                if hasattr(processor, "person_tracker"):
-                    if track_id in processor.person_tracker.tracked_person:
-                        person = processor.person_tracker.tracked_persons[track_id]
-                        person_recogintion_status = "unknonw"
+            if camera_id in self.cameras:
+                logger.info(f"Received alert for camera {camera_id}")
 
-            logger.info(f"Received alert for camera {camera_id}")
+                alarms = await self.db.get_all_alarms()
 
-            alarms = await self.db.get_all_alarms()
-
-            for alarm in alarms:
-                await self.db.update_alarm_status(
-                    alarm["id"], True, None, datetime.now()
-                )
-
-                alarm_ws = self.alarms[alarm["id"]].get("websocket")
-                if alarm_ws:
-                    await alarm_ws.send_json(
-                        {
-                            "active": "true",
-                        }
+                for alarm in alarms:
+                    await self.db.update_alarm_status(
+                        alarm["id"], True, None, datetime.now()
                     )
+
+                    alarm_ws = self.alarms[alarm["id"]].get("websocket")
+                    if alarm_ws:
+                        await alarm_ws.send_json(
+                            {
+                                "active": "true",
+                            }
+                        )
 
         except Exception as e:
             logger.error(f"Error handling alert: {e}")
