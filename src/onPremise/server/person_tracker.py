@@ -6,7 +6,6 @@ import torch
 import logging
 import aiohttp
 import mediapipe as mp
-import asyncio
 import uuid
 import os
 
@@ -20,8 +19,7 @@ from collections import deque
 from logging_config import setup_logger
 from nats_client import NatsClient, Commands
 from reid_implementation import Reid
-from datetime import datetime
-from database import Database
+from datetime import datetime, Database
 
 
 setup_logger()
@@ -265,27 +263,27 @@ class OptimizedPersonTracker:
                 return
 
             # Upload face image
-            # try:
-            # async with aiohttp.ClientSession() as session:
-            #     async with session.put(
-            #         response["url"],
-            #         data=img_bytes,
-            #         headers={"Content-Type": "*"},
-            #         timeout=30,
-            #     ) as resp:
-            #         if resp.status != 200:
-            #             error_text = await resp.text()
-            #             logger.error(f"Failed to upload face image: {error_text}")
-            #             track.recognition_status = "pending"
-            #             return
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.put(
+                        response["url"],
+                        data=img_bytes,
+                        headers={"Content-Type": "*"},
+                        timeout=30,
+                    ) as resp:
+                        if resp.status != 200:
+                            error_text = await resp.text()
+                            logger.error(f"Failed to upload face image: {error_text}")
+                            track.recognition_status = "pending"
+                            return
 
-            #         logger.info(
-            #             f"Successfully uploaded face image for face_id {track.face_id}"
-            #         )
-            # except Exception as e:
-            #     logger.error(f"Error uploading face image: {e}")
-            #     track.recognition_status = "pending"
-            #     return
+                        logger.info(
+                            f"Successfully uploaded face image for face_id {track.face_id}"
+                        )
+            except Exception as e:
+                logger.error(f"Error uploading face image: {e}")
+                track.recognition_status = "pending"
+                return
 
             # Execute recognition
             try:
