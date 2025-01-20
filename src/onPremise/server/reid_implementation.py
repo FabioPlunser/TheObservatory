@@ -3,30 +3,22 @@ import asyncio
 import torch
 import cv2
 import threading
-import queue
 import logging
-import time
 import os
 import mediapipe as mp
 import aiohttp
 from nats_client import NatsClient, Commands
-from collections import OrderedDict
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-from contextlib import nullcontext
-from multiprocessing import cpu_count
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 from scipy.spatial.distance import cdist
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from torchreid import models
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-from collections import deque, defaultdict
+from collections import deque, defaultdict, OrderedDict
 from logging_config import setup_logger
-from database import Database
 
 setup_logger()
 logger = logging.getLogger("ReID")
@@ -153,7 +145,7 @@ class Reid:
         # Performance optimization settings
         self.feature_cache_size = 100
         self.min_detection_size = (32, 32)
-        self.target_size = (128, 256)  # Reduced size for ReID
+        self.target_size = (224, 224)  # Reduced size for ReID
         self.batch_process_timeout = 0.1
         
         # Add feature caching
@@ -184,17 +176,21 @@ class Reid:
             # Process in smaller sub-batches for better memory usage
             sub_batch_size = 8
             all_features = []
-            
+
             for i in range(0, len(frames), sub_batch_size):
                 sub_batch = frames[i:i + sub_batch_size]
-                
+
                 # Parallel preprocessing
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     processed_frames = list(executor.map(self._preprocess_frame, sub_batch))
-                
+
                 # Stack and process sub-batch
                 batch = torch.stack(processed_frames).to(self.device)
-                
+
+                # Ensure the input tensor is of the same type as the model weights
+                if self.device.type == 'cuda':
+                    batch = batch.half()  # Convert to half precision if using CUDA
+
                 with torch.inference_mode(), torch.cuda.amp.autocast(enabled=True):
                     features = self.reid_model(batch)
                     features = torch.nn.functional.normalize(features, dim=1)
@@ -222,7 +218,7 @@ class Reid:
         """Extract robust feature embeddings"""
         with torch.no_grad():
             # Preprocessing
-            img = cv2.resize(frame, (256, 256))
+            img = cv2.resize(frame, self.target_size, interpolation=cv2.INTER_AREA)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             img = img / 255.0
             img = (img - np.array([0.485, 0.456, 0.406])) / np.array(

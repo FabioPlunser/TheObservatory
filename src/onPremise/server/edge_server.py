@@ -2,26 +2,28 @@ import socket
 import platform
 import asyncio
 import logging
-import multiprocessing
 import json
-
+import os
 
 from zeroconf import ServiceInfo, Zeroconf
 from datetime import datetime
-from typing import Dict, Set
 from database import Database
 from nats_client import SharedNatsClient, Commands
 from logging_config import setup_logger
 from video_processor import VideoProcessor
 from concurrent.futures import ThreadPoolExecutor
 
-import os
-
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
+# Setup logger for evaluation logs
 setup_logger()
 logger = logging.getLogger("EdgeServer")
 
+evaluation_logger = logging.getLogger("Evaluation")
+evaluation_logger.setLevel(logging.INFO)
+evaluation_handler = logging.FileHandler("evaluation.log")
+evaluation_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+evaluation_logger.addHandler(evaluation_handler)
 
 class EdgeServer:
     def __init__(self, port):
@@ -281,14 +283,17 @@ class EdgeServer:
             }
 
             logger.info(f"Started video processor for camera {camera_id}")
+            evaluation_logger.info(f"Started video processor for camera {camera_id}")
 
         except Exception as e:
             logger.error(f"Error starting camera stream: {e}")
+            evaluation_logger.error(f"Error starting camera stream: {e}")
             raise
 
     async def stop_camera_stream(self, camera_id: str):
         """Stop streaming for a camera"""
         logger.info(f"Stopping camera stream {camera_id}")
+        evaluation_logger.info(f"Stopping camera stream {camera_id}")
 
         try:
             if camera_id in self.cameras:
@@ -297,9 +302,11 @@ class EdgeServer:
             self.video_processor.remove_camera(camera_id)
             # Camera will be stopped when processor is stopped
             logger.info(f"Successfully stopped camera stream {camera_id}")
+            evaluation_logger.info(f"Successfully stopped camera stream {camera_id}")
 
         except Exception as e:
             logger.error(f"Error in stop_camera_stream: {e}")
+            evaluation_logger.error(f"Error in stop_camera_stream: {e}")
             raise
 
     async def get_frame(self, camera_id: str) -> bytes:
@@ -309,11 +316,13 @@ class EdgeServer:
 
         except Exception as e:
             logger.error(f"Error getting frame: {e}")
+            evaluation_logger.error(f"Error getting frame: {e}")
             return None
 
     async def _setup_alert_subscription(self):
         """Setup subscription for face recognition alerts"""
         logger.info("Setting up alert subscription")
+        evaluation_logger.info("Setting up alert subscription")
         nats_client = SharedNatsClient.get_instance()
         try:
             company_id = await self.db.get_company_id()
@@ -323,20 +332,27 @@ class EdgeServer:
                     f"{Commands.ALARM.value}.{company_id}", self._handle_alert
                 )
                 logger.info("Alert subscription setup successfully")
+                evaluation_logger.info("Alert subscription setup successfully")
         except Exception as e:
             logger.error(f"Error setting up alert subscription: {e}")
+            evaluation_logger.error(f"Error setting up alert subscription: {e}")
 
     async def _handle_alert(self, msg):
-        """Handle incoming face regonition alerts"""
+        """Handle incoming face recognition alerts"""
         nats_client = SharedNatsClient.get_instance()
         try:
             logger.info(f"Received alert: {msg.subject}")
+            evaluation_logger.info(f"Received alert: {msg.subject}")
             data = json.loads(msg.data.decode())
             camera_id = data.get("camera_id")
             unknown_face_url = data.get("unknown_face_url")
             track_id = data.get("track_id")
             face_id = data.get("face_id")
             company_id = data.get("company_id")
+
+            # Log detailed information about the alert
+            logger.info(f"Alert details: camera_id={camera_id}, unknown_face_url={unknown_face_url}, track_id={track_id}, face_id={face_id}, company_id={company_id}")
+            evaluation_logger.info(f"Alert details: camera_id={camera_id}, unknown_face_url={unknown_face_url}, track_id={track_id}, face_id={face_id}, company_id={company_id}")
 
             # Verify this alert is for one of our cameras
             if camera_id not in self.cameras:
@@ -345,11 +361,12 @@ class EdgeServer:
                 )
                 return
 
-            """update that the certain camera has an unknown face. So that the correct videostream can be shown on the website"""
+            # Update that the certain camera has an unknown face
             await self.db.update_camera_unknown_face(camera_id, True, unknown_face_url)
 
             if camera_id in self.cameras:
                 logger.info(f"Received alert for camera {camera_id}")
+                evaluation_logger.info(f"Received alert for camera {camera_id}")
 
                 alarms = await self.db.get_all_alarms()
 
@@ -365,6 +382,9 @@ class EdgeServer:
                                 "active": "true",
                             }
                         )
+                    logger.info(f"Alarm {alarm['id']} activated")
+                    evaluation_logger.info(f"Alarm {alarm['id']} activated")
 
         except Exception as e:
             logger.error(f"Error handling alert: {e}")
+            evaluation_logger.error(f"Error handling alert: {e}")

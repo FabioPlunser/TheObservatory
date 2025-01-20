@@ -7,16 +7,15 @@ import queue
 import os
 import threading
 import multiprocessing as mp
+import colorsys
 
 from typing import Dict, List, Optional, Tuple
 from ultralytics import YOLO
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict, deque
 from logging_config import setup_logger
-from person_tracker import OptimizedPersonTracker
-from rtsp_reader import RTSPReader
+from contextlib import nullcontext
 from reid_implementation import Reid
-import colorsys
 
 setup_logger()
 logger = logging.getLogger("VideoProcessor")
@@ -227,10 +226,9 @@ class VideoProcessor:
         frame_queue: mp.Queue,
         stop_event: threading.Event,
     ):
-        # Fix the tuple syntax error
-        max_retries = 3  # Remove the tuple syntax
-        retry_delay = 2.0  # Remove the tuple syntax
-        exponential_backoff = True
+        max_retries: int = 3
+        retry_delay: float = 2.0
+        exponential_backoff: bool = True
 
         cap = None
         frame_counter = 0

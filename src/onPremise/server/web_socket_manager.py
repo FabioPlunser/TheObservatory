@@ -1,4 +1,4 @@
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 from collections import defaultdict
 from datetime import datetime
 from edge_server import EdgeServer
