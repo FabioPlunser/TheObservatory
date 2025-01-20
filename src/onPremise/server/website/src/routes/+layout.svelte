@@ -59,7 +59,7 @@
   {#if alarms && alarms.length > 0}
     <AlarmPopup {alarms} />
   {/if}
-  {#if company.value && !company.value.cloud_url}
+  <!-- {#if company.value && !company.value.cloud_url}
     <div
       class="flex justify-center mx-auto my-auto h-screen pt-24 gap-4 text-white"
     >
@@ -79,9 +79,9 @@
     </div>
   {:else if !company}
     <h1>Unforseen Error</h1>
-  {:else}
+  {:else} -->
     <Nav />
     <div class="mt-24"></div>
     {@render children()}
-  {/if}
+  <!-- {/if} -->
 </main>
