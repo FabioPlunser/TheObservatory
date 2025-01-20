@@ -7,6 +7,10 @@ import queue
 import logging
 import time
 import os
+import mediapipe as mp
+import aiohttp
+from nats_client import NatsClient, Commands
+from collections import OrderedDict
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -16,11 +20,11 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 from scipy.spatial.distance import cdist
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from torchreid import models
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from collections import deque
+from collections import deque, defaultdict
 from logging_config import setup_logger
 from database import Database
 
@@ -30,590 +34,729 @@ logger = logging.getLogger("ReID")
 
 @dataclass
 class PersonFeature:
+    global_id: str
     reid_features: np.ndarray
-    appearance_features: List[np.ndarray]
-    temporal_features: Dict[str, float]
-    spatial_features: Dict[str, Tuple[float, float]]
-    last_seen: datetime
-    camera_id: str
-    track_id: int
-    face_id: Optional[str] = None
-    recognition_status: str = "pending"
+    appearance_history: List[np.ndarray] = field(default_factory=list)
+    temporal_features: Dict[str, float] = field(default_factory=dict)
+    spatial_features: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    last_seen: datetime = field(default_factory=datetime.now)
+    camera_history: Dict[str, List[datetime]] = field(default_factory=dict)
     confidence: float = 0.0
-    face_image: Optional[np.ndarray] = None
+    track_id_history: List[int] = field(default_factory=list)
+    face_id: Optional[str] = None
+    inactive_time: timedelta = field(default_factory=lambda: timedelta(seconds=0))
 
 
-class OptimizedCrossCameraTracker:
+class LRUCache:
+    """Thread-safe LRU Cache implementation"""
+    def __init__(self, maxsize: int = 128):
+        self.maxsize = maxsize
+        self.cache = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key, default=None):
+        with self._lock:
+            try:
+                value = self.cache.pop(key)
+                self.cache[key] = value
+                return value
+            except KeyError:
+                return default
+
+    def put(self, key, value):
+        with self._lock:
+            try:
+                self.cache.pop(key)
+            except KeyError:
+                if len(self.cache) >= self.maxsize:
+                    self.cache.popitem(last=False)
+            self.cache[key] = value
+
+    def clear(self):
+        with self._lock:
+            self.cache.clear()
+
+
+class Reid:
+    metrics = {
+        "feature_extraction_time": deque(maxlen=100),
+        "matching_time": deque(maxlen=100),
+        "reid_success_rate": deque(maxlen=100),
+        "track_lengths": deque(maxlen=100),
+        "active_tracks": 0,
+    }
+
+    # Feature extraction optimization
+    feature_extraction_batch = []
+    feature_extraction_lock = threading.Lock()
+
     def __init__(
         self,
-        max_feature_age: int = 300,
-        feature_history_size: int = 5,
-        reid_threshold: float = 0.6,
+        company_id: str = None,  # Add company_id parameter
+        camera_id: str = None,   # Add camera_id parameter
+        device: torch.device = None,
+        max_feature_age: int = 7200,  # 2 hours
+        feature_history_size: int = 20,
+        reid_threshold: float = 0.5,
         spatial_weight: float = 0.3,
         temporal_weight: float = 0.2,
-        batch_size: int = 16,  # Increased batch size for better throughput
+        appearance_weight: float = 0.4,
+        movement_pattern_weight: float = 0.1,
+        batch_size: int = 32,
     ):
-
-        self.db = Database()
-
-        # Initialize device
-        self.device = self._init_device()
-
-        # Initialize ReID model with optimizations
+        self.company_id = company_id
+        self.camera_id = camera_id
+        # Use provided device or initialize a new one
+        self.device = device if device is not None else self._init_device()
         self.reid_model = self._init_reid_model()
 
-        # Feature management
+        # Enhanced feature management
         self.person_features: Dict[str, PersonFeature] = {}
         self.camera_to_global: Dict[Tuple[str, int], str] = {}
+        self.track_id_to_global: Dict[int, str] = {}
 
-        # Configuration
-        self.max_feature_age = timedelta(seconds=max_feature_age)
+        # Improved configuration - Fix timedelta initialization
+        self.max_feature_age = timedelta(seconds=int(max_feature_age))  # Ensure int conversion
         self.feature_history_size = feature_history_size
         self.reid_threshold = reid_threshold
-        self.spatial_weight = spatial_weight
-        self.temporal_weight = temporal_weight
+        self.weights = {
+            "appearance": appearance_weight,
+            "spatial": spatial_weight,
+            "temporal": temporal_weight,
+            "movement": movement_pattern_weight,
+        }
+
+        # Performance optimizations
         self.batch_size = batch_size
+        self.feature_cache = {}
+        self.processing_lock = threading.Lock()
+        self.appearance_buffer = deque(maxlen=100)
 
-        # Feature extraction queue for batch processing
-        self.feature_queue = queue.Queue(maxsize=30)
-        self.processing_thread = threading.Thread(target=self._process_feature_queue)
-        self.processing_thread.daemon = True
-        self.processing_thread.start()
+        # Enhanced tracking stability
+        self.min_track_confidence = 0.3
+        self.confidence_decay_rate = 0.95
+        self.reactivation_threshold = 0.8
+        self.movement_patterns: Dict[
+            str, List[Tuple[datetime, Tuple[float, float]]]
+        ] = {}
 
-        # Enhanced thread and process pools
-        self.thread_pool = ThreadPoolExecutor(max_workers=4)
+        # Improve temporal consistency
+        self.id_timeout = timedelta(hours=24)  # Keep IDs for 24 hours
+        self.feature_update_rate = 0.3  # Rate to update feature history
+        self.confidence_threshold = 0.7  # Minimum confidence for ID reuse
 
-        # Optimized feature cache with LRU
-        self.feature_cache: Dict[str, Tuple[np.ndarray, datetime]] = {}
-        self.cache_timeout = timedelta(seconds=30)
+        # Enhanced movement tracking
+        self.velocity_history = defaultdict(list)
+        self.position_history = defaultdict(list)
+        self.max_history_size = 100
 
-        # Preprocessing optimizations
-        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-
-        # Enhanced performance monitoring
-        self.metrics = {
-            "feature_extraction_time": deque(maxlen=100),
-            "matching_time": deque(maxlen=100),
-            "preprocessing_time": deque(maxlen=100),
-            "cache_hits": 0,
-            "cache_misses": 0,
-            "batch_sizes": deque(maxlen=100),
-        }
-
-    def _cleanup_old_features(self, current_time: datetime):
-        """Remove features that are too old"""
-        expired_ids = []
-        expired_camera_tracks = []
-
-        for global_id, feature_data in self.person_features.items():
-            if current_time - feature_data.last_seen > self.max_feature_age:
-                expired_ids.append(global_id)
-                # Find associated camera tracks
-                for camera_track, g_id in self.camera_to_global.items():
-                    if g_id == global_id:
-                        expired_camera_tracks.append(camera_track)
-
-        # Remove expired entries
-        for global_id in expired_ids:
-            del self.person_features[global_id]
-        for camera_track in expired_camera_tracks:
-            del self.camera_to_global[camera_track]
-
-    def _log_performance_metrics(self):
-        """Log performance metrics"""
-        metrics = {
-            "avg_feature_extraction": sum(self.metrics["feature_extraction_time"])
-            / len(self.metrics["feature_extraction_time"]),
-            "avg_matching_time": sum(self.metrics["matching_time"])
-            / len(self.metrics["matching_time"]),
-            "avg_preprocessing": sum(self.metrics["preprocessing_time"])
-            / len(self.metrics["preprocessing_time"]),
-            "cache_hit_ratio": (
-                self.metrics["cache_hits"]
-                / (self.metrics["cache_hits"] + self.metrics["cache_misses"])
-                if (self.metrics["cache_hits"] + self.metrics["cache_misses"]) > 0
-                else 0
-            ),
-            "avg_batch_size": (
-                sum(self.metrics["batch_sizes"]) / len(self.metrics["batch_sizes"])
-                if self.metrics["batch_sizes"]
-                else 0
-            ),
-        }
-        logger.info(f"Performance metrics: {metrics}")
+        # Performance optimization settings
+        self.feature_cache_size = 100
+        self.min_detection_size = (32, 32)
+        self.target_size = (128, 256)  # Reduced size for ReID
+        self.batch_process_timeout = 0.1
+        
+        # Add feature caching
+        self.feature_cache = LRUCache(maxsize=self.feature_cache_size)
 
     def _init_device(self) -> torch.device:
-        """Initialize optimal device for processing"""
         if torch.cuda.is_available():
             device = torch.device("cuda")
-            # Enhanced CUDA optimizations
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.enabled = True
-            torch.set_float32_matmul_precision("high")
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            device = torch.device("mps")
         else:
             device = torch.device("cpu")
-            torch.set_num_threads(cpu_count())
         return device
 
     def _init_reid_model(self):
-        """Initialize ReID model with optimizations"""
-        model = models.build_model(
-            name="osnet_ain_x1_0", num_classes=1000, loss="softmax", pretrained=True
-        )
+        # Initialize with a more robust backbone like ResNet50-IBN
+        model = torch.hub.load("XingangPan/IBN-Net", "resnet50_ibn_a", pretrained=True)
+        model.fc = torch.nn.Linear(model.fc.in_features, 2048)
         model = model.eval().to(self.device)
-
-        if torch.cuda.is_available():
-            # Use updated autocast syntax
-            self.amp_context = torch.amp.autocast("cuda")
-            torch.cuda.empty_cache()
-        else:
-            self.amp_context = nullcontext()
-
         return model
 
-    @lru_cache(maxsize=128)
-    def _preprocess_image(self, img_bytes: bytes) -> np.ndarray:
-        """Cached and optimized image preprocessing"""
-        img = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-
-        # Fast resize with optimal interpolation
-        img = cv2.resize(img, (256, 256), interpolation=cv2.INTER_LINEAR)
-
-        # Optimized CLAHE on L channel only
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-        lab[..., 0] = self.clahe.apply(lab[..., 0])
-        img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-
-        # Vectorized normalization
-        img = img.astype(np.float32) / 255.0
-        img = (img - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
-
-        return img
-
-    def _process_feature_queue(self):
-        """Enhanced background thread for batch processing features"""
-        batch_crops = []
-        batch_ids = []
-        last_process_time = time.time()
-
-        while True:
-            try:
-                # Dynamic batch collection with timeout
-                try:
-                    while len(batch_crops) < self.batch_size:
-                        # Process batch if it's been too long
-                        if time.time() - last_process_time > 0.5 and batch_crops:
-                            break
-
-                        crop, track_id = self.feature_queue.get(timeout=0.1)
-                        batch_crops.append(crop)
-                        batch_ids.append(track_id)
-                except queue.Empty:
-                    if batch_crops:  # Process partial batch
-                        pass
-                    else:
-                        continue
-
-                if not batch_crops:
-                    continue
-
-                # Record batch size for metrics
-                self.metrics["batch_sizes"].append(len(batch_crops))
-
-                # Extract features for batch
-                start_time = time.time()
-                features = self._extract_reid_features_batch(batch_crops)
-                self.metrics["feature_extraction_time"].append(time.time() - start_time)
-
-                # Update feature cache
-                current_time = datetime.now()
-                for feature, track_id in zip(features, batch_ids):
-                    self.feature_cache[track_id] = (feature, current_time)
-
-                batch_crops = []
-                batch_ids = []
-                last_process_time = time.time()
-
-            except Exception as e:
-                logger.error(f"Error in feature processing: {e}")
-                batch_crops = []
-                batch_ids = []
-
-    def _extract_reid_features_batch(self, crops: List[np.ndarray]) -> List[np.ndarray]:
+    def _extract_features_batch(self, frames: List[np.ndarray]) -> List[np.ndarray]:
         """Optimized batch feature extraction"""
+        if not frames:
+            return []
+
         try:
-            if not crops:
-                return []
+            # Process in smaller sub-batches for better memory usage
+            sub_batch_size = 8
+            all_features = []
+            
+            for i in range(0, len(frames), sub_batch_size):
+                sub_batch = frames[i:i + sub_batch_size]
+                
+                # Parallel preprocessing
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    processed_frames = list(executor.map(self._preprocess_frame, sub_batch))
+                
+                # Stack and process sub-batch
+                batch = torch.stack(processed_frames).to(self.device)
+                
+                with torch.inference_mode(), torch.cuda.amp.autocast(enabled=True):
+                    features = self.reid_model(batch)
+                    features = torch.nn.functional.normalize(features, dim=1)
+                    all_features.extend(features.cpu().numpy())
 
-            start_time = time.time()
-
-            # Process images in current process
-            preprocessed = []
-            for crop in crops:
-                if crop.shape[0] < 64 or crop.shape[1] < 32:
-                    continue
-
-                try:
-                    # Preprocess image directly
-                    img = cv2.resize(crop, (256, 256), interpolation=cv2.INTER_LINEAR)
-
-                    # Optimize contrast
-                    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-                    lab[..., 0] = self.clahe.apply(lab[..., 0])
-                    img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-
-                    # Normalize
-                    img = img.astype(np.float32) / 255.0
-                    img = (img - np.array([0.485, 0.456, 0.406])) / np.array(
-                        [0.229, 0.224, 0.225]
-                    )
-
-                    # Convert to tensor
-                    img = torch.from_numpy(img).float()
-                    img = img.permute(2, 0, 1)
-                    preprocessed.append(img)
-                except Exception as e:
-                    logger.error(f"Preprocessing error: {e}")
-                    continue
-
-            if not preprocessed:
-                return []
-
-            # Stack into batch
-            batch = torch.stack(preprocessed).to(self.device)
-
-            # Extract features with optimizations
-            with torch.no_grad(), self.amp_context:
-                features = self.reid_model(batch)
-                features = features.cpu().numpy()
-
-            # Vectorized L2 normalization
-            features = features / np.linalg.norm(features, axis=1, keepdims=True)
-
-            self.metrics["preprocessing_time"].append(time.time() - start_time)
-            return features
+            return all_features
 
         except Exception as e:
             logger.error(f"Error in batch feature extraction: {e}")
             return []
 
-    def _compute_similarity_matrix(
+    def _preprocess_frame(self, frame: np.ndarray) -> torch.Tensor:
+        """Optimized frame preprocessing"""
+        # Resize to target size
+        frame = cv2.resize(frame, self.target_size, interpolation=cv2.INTER_AREA)
+        # Convert to RGB and normalize
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = frame.astype(np.float32) / 255.0
+        frame = (frame - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
+        # Convert to tensor
+        frame = torch.from_numpy(frame).permute(2, 0, 1)
+        return frame
+
+    def _extract_features(self, frame: np.ndarray) -> np.ndarray:
+        """Extract robust feature embeddings"""
+        with torch.no_grad():
+            # Preprocessing
+            img = cv2.resize(frame, (256, 256))
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = img / 255.0
+            img = (img - np.array([0.485, 0.456, 0.406])) / np.array(
+                [0.229, 0.224, 0.225]
+            )
+            img = torch.from_numpy(img).float().permute(2, 0, 1).unsqueeze(0)
+            img = img.to(self.device)
+
+            # Feature extraction with attention
+            features = self.reid_model(img)
+            features = torch.nn.functional.normalize(features, dim=1)
+            return features.cpu().numpy()[0]
+
+    def _compute_appearance_similarity(
         self, query_features: np.ndarray, gallery_features: List[np.ndarray]
-    ) -> np.ndarray:
-        """Optimized similarity matrix computation"""
-        if not gallery_features:
-            return np.array([])
-
-        # Vectorized operations with pre-allocation
-        gallery_features = np.vstack(gallery_features)
-        similarities = 1 - cdist(
-            query_features.reshape(1, -1), gallery_features, metric="cosine"
-        )
-        return similarities.flatten()
-
-    def _compute_spatial_similarity(
-        self, pos1: Tuple[float, float], pos2: Tuple[float, float]
     ) -> float:
-        dist = np.linalg.norm(np.array(pos1) - np.array(pos2))
-        return 1 / (1 + dist)
+        """Compute appearance similarity with temporal weighting"""
+        if not gallery_features:
+            return 0.0
 
-    def _compute_temporal_similarity(self, t1: float, t2: float) -> float:
-        dt = abs(t1 - t2)
-        return np.exp(-dt / 2.0)
+        similarities = []
+        weights = np.linspace(
+            0.5, 1.0, len(gallery_features)
+        )  # More weight to recent features
+
+        for feat, weight in zip(gallery_features, weights):
+            sim = (
+                1
+                - cdist(
+                    query_features.reshape(1, -1), feat.reshape(1, -1), metric="cosine"
+                )[0][0]
+            )
+            similarities.append(sim * weight)
+
+        return np.mean(similarities)
+
+    def _analyze_movement_patterns(
+        self, pattern: List[Tuple[datetime, Tuple[float, float]]]
+    ) -> Dict:
+        """Analyze movement patterns to extract behavioral characteristics"""
+        if len(pattern) < 2:
+            return {}
+
+        analysis = {
+            "avg_velocity": 0,
+            "direction_changes": 0,
+            "stopping_points": 0,
+            "activity_zones": set(),
+            "typical_paths": [],
+        }
+
+        # Calculate velocities and accelerations
+        velocities = []
+        accelerations = []
+        directions = []
+
+        for i in range(1, len(pattern)):
+            dt = (pattern[i][0] - pattern[i - 1][0]).total_seconds()
+            if dt > 0:
+                dx = pattern[i][1][0] - pattern[i - 1][1][0]
+                dy = pattern[i][1][1] - pattern[i - 1][1][1]
+                velocity = (dx / dt, dy / dt)
+                velocities.append(velocity)
+
+                if i > 1:
+                    prev_velocity = velocities[-2]
+                    ax = (velocity[0] - prev_velocity[0]) / dt
+                    ay = (velocity[1] - prev_velocity[1]) / dt
+                    accelerations.append((ax, ay))
+
+                    # Detect direction changes
+                    if self._is_direction_change(velocity, prev_velocity):
+                        analysis["direction_changes"] += 1
+
+        # Calculate average velocity
+        if velocities:
+            avg_velocity = np.mean([np.sqrt(vx**2 + vy**2) for vx, vy in velocities])
+            analysis["avg_velocity"] = avg_velocity
+
+        # Detect stopping points (low velocity areas)
+        for velocity in velocities:
+            if np.sqrt(velocity[0] ** 2 + velocity[1] ** 2) < 0.1:  # threshold
+                analysis["stopping_points"] += 1
+
+        # Identify activity zones
+        for pos in pattern:
+            zone = self._quantize_position(pos[1])
+            analysis["activity_zones"].add(zone)
+
+        # Extract typical paths
+        if len(pattern) >= 3:
+            analysis["typical_paths"] = self._extract_typical_paths(pattern)
+
+        return analysis
+
+    def _is_direction_change(
+        self, v1: Tuple[float, float], v2: Tuple[float, float], threshold: float = 45
+    ) -> bool:
+        """Detect significant direction changes"""
+        angle = np.arctan2(v1[1], v1[0]) - np.arctan2(v2[1], v2[0])
+        angle = np.degrees(angle)
+        return abs(angle) > threshold
+
+    def _quantize_position(
+        self, pos: Tuple[float, float], grid_size: float = 1.0
+    ) -> Tuple[int, int]:
+        """Quantize position into discrete zones"""
+        return (int(pos[0] / grid_size), int(pos[1] / grid_size))
+
+    def _extract_typical_paths(
+        self, pattern: List[Tuple[datetime, Tuple[float, float]]]
+    ) -> List[List[Tuple[float, float]]]:
+        """Extract common movement paths"""
+        paths = []
+        current_path = []
+
+        for i in range(1, len(pattern)):
+            current_path.append(pattern[i][1])
+
+            # Check for path break conditions (long time gap or stopping point)
+            time_gap = (pattern[i][0] - pattern[i - 1][0]).total_seconds()
+            if time_gap > 5.0 or self._is_stopping_point(
+                pattern[i][1], pattern[i - 1][1]
+            ):
+                if len(current_path) >= 3:  # Minimum path length
+                    paths.append(current_path.copy())
+                current_path = []
+
+        return paths
+
+    def _compute_movement_pattern_similarity(
+        self, track_id: int, candidate_id: str
+    ) -> float:
+        """Enhanced movement pattern comparison"""
+        if track_id not in self.velocity_history or candidate_id not in self.velocity_history:
+            return 0.0
+
+        current_velocities = self.velocity_history[track_id][-10:]
+        candidate_velocities = self.velocity_history[candidate_id][-10:]
+
+        if not current_velocities or not candidate_velocities:
+            return 0.0
+
+        # Compare velocity patterns
+        current_pattern = np.array(current_velocities)
+        candidate_pattern = np.array(candidate_velocities)
+
+        # DTW distance between velocity patterns
+        distance = self._dtw_distance(current_pattern, candidate_pattern)
+        similarity = 1.0 / (1.0 + distance)
+
+        return similarity
+
+    def _dtw_distance(self, pattern1: np.ndarray, pattern2: np.ndarray) -> float:
+        """Calculate Dynamic Time Warping distance between patterns"""
+        n, m = len(pattern1), len(pattern2)
+        dtw_matrix = np.inf * np.ones((n + 1, m + 1))
+        dtw_matrix[0, 0] = 0
+
+        for i in range(1, n + 1):
+            for j in range(1, m + 1):
+                cost = np.linalg.norm(pattern1[i-1] - pattern2[j-1])
+                dtw_matrix[i, j] = cost + min(
+                    dtw_matrix[i-1, j],
+                    dtw_matrix[i, j-1],
+                    dtw_matrix[i-1, j-1]
+                )
+
+        return dtw_matrix[n, m]
+
+    def _update_movement_patterns(
+        self, track_id: int, position: Tuple[float, float], timestamp: datetime
+    ):
+        """Update movement patterns with velocity calculation"""
+        self.position_history[track_id].append((position, timestamp))
+        if len(self.position_history[track_id]) > self.max_history_size:
+            self.position_history[track_id].pop(0)
+
+        if len(self.position_history[track_id]) >= 2:
+            pos1, t1 = self.position_history[track_id][-2]
+            pos2, t2 = self.position_history[track_id][-1]
+            
+            dt = (t2 - t1).total_seconds()
+            if dt > 0:
+                velocity = (
+                    (pos2[0] - pos1[0]) / dt,
+                    (pos2[1] - pos1[1]) / dt
+                )
+                self.velocity_history[track_id].append(velocity)
+                if len(self.velocity_history[track_id]) > self.max_history_size:
+                    self.velocity_history[track_id].pop(0)
 
     def update(
         self,
         camera_id: str,
         person_crops: List[Tuple[int, np.ndarray]],
         positions: Optional[Dict[int, Tuple[float, float]]] = None,
-        face_ids: Optional[Dict[int, str]] = None,
-        recognition_statuses: Optional[Dict[int, str]] = None,
     ) -> Dict[int, str]:
-        """Optimized update with batch processing"""
-        start_time = time.time()
-        track_to_global = {}
+        """Updated main update function with improved tracking logic"""
         current_time = datetime.now()
+        track_to_global = {}
 
-        try:
-            # Clean up old features
-            self._cleanup_old_features(current_time)
+        with self.processing_lock:
+            # Update movement patterns
+            if positions:
+                for track_id, pos in positions.items():
+                    self._update_movement_patterns(track_id, pos, current_time)
 
-            # Process in optimal batches
-            for i in range(0, len(person_crops), self.batch_size):
-                batch = person_crops[i : i + self.batch_size]
-                self._process_batch(
-                    batch,
-                    camera_id,
-                    positions,
-                    face_ids,
-                    recognition_statuses,
-                    current_time,
-                    track_to_global,
+            # Process detections in batch for efficiency
+            batch_features = self._extract_features_batch([crop for _, crop in person_crops])
+
+            for (track_id, _), features in zip(person_crops, batch_features):
+                global_id = self._match_or_create_identity(
+                    track_id, features, camera_id, positions, current_time
                 )
-
-        except Exception as e:
-            logger.error(f"Error in update: {e}")
-
-        # Update performance metrics
-        self.metrics["matching_time"].append(time.time() - start_time)
-
-        # Log metrics periodically
-        # if len(self.metrics["matching_time"]) == 100:
-        #     self._log_performance_metrics()
+                if global_id:
+                    track_to_global[track_id] = global_id
 
         return track_to_global
 
-    def _process_batch(
-        self,
-        batch: List[Tuple[int, np.ndarray]],
-        camera_id: str,
-        positions: Optional[Dict[int, Tuple[float, float]]],
-        face_ids: Optional[Dict[int, str]],
-        recognition_statuses: Optional[Dict[int, str]],
-        current_time: datetime,
-        track_to_global: Dict[int, str],
-    ):
-        """Process a batch of detections"""
-        for track_id, crop in batch:
-            camera_track = (camera_id, track_id)
-            position = positions.get(track_id) if positions else None
-
-            # Handle existing tracks
-            if camera_track in self.camera_to_global:
-                self._update_existing_track(
-                    camera_track,
-                    track_id,
-                    crop,
-                    position,
-                    camera_id,
-                    current_time,
-                    face_ids,
-                    recognition_statuses,
-                    track_to_global,
-                )
-                continue
-
-            # Handle new tracks
-            self._process_new_track(
-                track_id,
-                crop,
-                position,
-                camera_id,
-                current_time,
-                face_ids,
-                recognition_statuses,
-                track_to_global,
-                camera_track,
-            )
-
     def _update_existing_track(
         self,
-        camera_track: Tuple[str, int],
+        global_id: str,
         track_id: int,
         crop: np.ndarray,
-        position: Optional[Tuple[float, float]],
         camera_id: str,
+        positions: Optional[Dict[int, Tuple[float, float]]],
         current_time: datetime,
-        face_ids: Optional[Dict[int, str]],
-        recognition_statuses: Optional[Dict[int, str]],
-        track_to_global: Dict[int, str],
     ):
-        """Update an existing track"""
-        global_id = self.camera_to_global[camera_track]
-        track_to_global[track_id] = global_id
+        """Update existing track with new information"""
+        person = self.person_features[global_id]
 
-        if global_id in self.person_features:
-            person = self.person_features[global_id]
+        # Extract and update features
+        new_features = self._extract_features(crop)
+        person.appearance_history.append(new_features)
+        if len(person.appearance_history) > self.feature_history_size:
+            person.appearance_history.pop(0)
 
-            try:
-                self.feature_queue.put_nowait((crop, track_id))
-            except queue.Full:
-                pass
+        # Update temporal and spatial information
+        person.last_seen = current_time
+        person.temporal_features[camera_id] = current_time.timestamp()
 
-            if position:
-                person.spatial_features[camera_id] = position
-            person.temporal_features[camera_id] = current_time.timestamp()
-            person.last_seen = current_time
+        if positions and track_id in positions:
+            person.spatial_features[camera_id] = positions[track_id]
 
-            if face_ids and track_id in face_ids:
-                person.face_id = face_ids[track_id]
-            if recognition_statuses and track_id in recognition_statuses:
-                person.recognition_status = recognition_statuses[track_id]
+        # Update camera history
+        if camera_id not in person.camera_history:
+            person.camera_history[camera_id] = []
+        person.camera_history[camera_id].append(current_time)
 
-    def _process_new_track(
-        self,
-        track_id: int,
-        crop: np.ndarray,
-        position: Optional[Tuple[float, float]],
-        camera_id: str,
-        current_time: datetime,
-        face_ids: Optional[Dict[int, str]],
-        recognition_statuses: Optional[Dict[int, str]],
-        track_to_global: Dict[int, str],
-        camera_track: Tuple[str, int],
-    ):
-        """Process a new track"""
+        # Update movement patterns
+        if track_id in positions:
+            self.movement_patterns[global_id].append(
+                (current_time, positions[track_id])
+            )
+
+        # Increase confidence with consistent tracking
+        person.confidence = min(1.0, person.confidence + 0.1)
+
+    async def _upload_face_to_cloud(self, face_crop: np.ndarray, global_id: str):
+        """Upload face image to cloud storage"""
         try:
-            self.feature_queue.put_nowait((crop, track_id))
-        except queue.Full:
-            return
+            # Convert and compress face image
+            _, img_encoded = cv2.imencode('.jpg', face_crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            img_bytes = img_encoded.tobytes()
 
-        # Wait for features
-        max_wait = 0.1
-        start_wait = time.time()
-        reid_features = None
+            # Get cloud URL from database
+            nats_url = await self.db.get_cloud_url()
+            nats_client = NatsClient(nats_url)
+            await nats_client.connect()
 
-        while time.time() - start_wait < max_wait:
-            if track_id in self.feature_cache:
-                reid_features, _ = self.feature_cache[track_id]
-                time.sleep(0.01)
-                break
-            time.sleep(0.01)
+            # Get presigned URL for upload
+            response = await nats_client.send_message_with_reply(
+                Commands.GET_PRESIGNED_UPLOAD_UNKNOWN_FACE_URL.value,
+                {
+                    "company_id": self.company_id,
+                    "face_id": global_id,
+                }
+            )
 
-        if reid_features is None:
-            return
+            if not response or not response.get("success"):
+                logger.error(f"Failed to get presigned URL for face upload: {response}")
+                return False
 
-        # Call _match_and_update after we have features
-        self._match_and_update(
-            reid_features,
-            track_id,
-            position,
-            camera_id,
-            current_time,
-            face_ids,
-            recognition_statuses,
-            track_to_global,
-        )
+            # Upload face image
+            async with aiohttp.ClientSession() as session:
+                async with session.put(
+                    response["url"],
+                    data=img_bytes,
+                    headers={"Content-Type": "image/jpeg"},
+                    timeout=30,
+                ) as resp:
+                    if resp.status != 200:
+                        logger.error(f"Failed to upload face image: {await resp.text()}")
+                        return False
 
-    def _match_and_update(
-        self,
-        reid_features: np.ndarray,
-        track_id: int,
-        position: Optional[Tuple[float, float]],
-        camera_id: str,
-        current_time: datetime,
-        face_ids: Optional[Dict[int, str]],
-        recognition_statuses: Optional[Dict[int, str]],
-        track_to_global: Dict[int, str],
-    ):
-        """Match and update person features with optimized processing"""
-        try:
-            # Compare with existing features
-            candidates = []
-            for global_id, feature_data in self.person_features.items():
-                # Remove the skip logic for same camera/time
+            # Notify cloud about new face
+            await nats_client.send_message(
+                Commands.NEW_PERSON_DETECTED.value,
+                {
+                    "company_id": self.company_id,
+                    "camera_id": self.camera_id,
+                    "person_id": global_id,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
 
-                # Compute appearance similarity
-                appearance_sim = self._compute_similarity_matrix(
-                    reid_features, feature_data.appearance_features
-                ).max()
-
-                # Compute spatial-temporal similarity
-                spatial_sim = 0.0
-                temporal_sim = 0.0
-
-                if position and camera_id in feature_data.spatial_features:
-                    spatial_sim = self._compute_spatial_similarity(
-                        position, feature_data.spatial_features[camera_id]
-                    )
-
-                if camera_id in feature_data.temporal_features:
-                    temporal_sim = self._compute_temporal_similarity(
-                        current_time.timestamp(),
-                        feature_data.temporal_features[camera_id],
-                    )
-
-                # Weighted similarity score
-                total_sim = (
-                    appearance_sim * (1 - self.spatial_weight - self.temporal_weight)
-                    + spatial_sim * self.spatial_weight
-                    + temporal_sim * self.temporal_weight
-                )
-
-                if total_sim > self.reid_threshold:
-                    candidates.append((global_id, total_sim, feature_data))
-
-            # Handle matching
-            if candidates:
-                candidates.sort(key=lambda x: x[1], reverse=True)
-                best_match, similarity, matched_feature = candidates[0]
-                global_id = best_match
-                logger.info(
-                    f"Matched person across cameras with similarity {similarity:.2f}"
-                )
-
-                # Update matched person's features
-                matched_feature.appearance_features.append(reid_features)
-                if len(matched_feature.appearance_features) > self.feature_history_size:
-                    matched_feature.appearance_features.pop(0)
-
-                # Update spatial-temporal info
-                if position:
-                    matched_feature.spatial_features[camera_id] = position
-                matched_feature.temporal_features[camera_id] = current_time.timestamp()
-                matched_feature.last_seen = current_time
-
-                # Update recognition info if available
-                if face_ids and track_id in face_ids:
-                    matched_feature.face_id = face_ids[track_id]
-                if recognition_statuses and track_id in recognition_statuses:
-                    matched_feature.recognition_status = recognition_statuses[track_id]
-
-            else:
-                # Create new identity
-                global_id = f"person_{len(self.person_features)}"
-                logger.info(f"Created new person {global_id}")
-
-                person_feature = PersonFeature(
-                    reid_features=reid_features,
-                    appearance_features=[reid_features],
-                    temporal_features={camera_id: current_time.timestamp()},
-                    spatial_features={camera_id: position} if position else {},
-                    last_seen=current_time,
-                    camera_id=camera_id,
-                    track_id=track_id,
-                    face_id=face_ids.get(track_id) if face_ids else None,
-                    recognition_status=(
-                        recognition_statuses.get(track_id, "pending")
-                        if recognition_statuses
-                        else "pending"
-                    ),
-                    confidence=1.0,
-                )
-
-                self.person_features[global_id] = person_feature
-
-            # Update mappings
-            camera_track = (camera_id, track_id)
-            self.camera_to_global[camera_track] = global_id
-            track_to_global[track_id] = global_id
+            logger.info(f"Successfully uploaded face for person {global_id}")
+            return True
 
         except Exception as e:
-            logger.error(f"Error in match and update: {e}")
+            logger.error(f"Error uploading face to cloud: {e}")
+            return False
+
+    def _handle_new_detection(
+        self,
+        track_id: int,
+        crop: np.ndarray,
+        camera_id: str,
+        positions: Optional[Dict[int, Tuple[float, float]]],
+        current_time: datetime,
+    ) -> Optional[str]:
+        """Handle new detection with improved matching logic"""
+        features = self._extract_features(crop)
+        best_match = None
+        best_score = 0
+
+        # Check all existing identities including recently inactive ones
+        for global_id, person in self.person_features.items():
+            # Skip if the track is too old
+            if current_time - person.last_seen > self.max_feature_age:
+                continue
+
+            # Compute comprehensive similarity score
+            appearance_sim = self._compute_appearance_similarity(
+                features, person.appearance_history
+            )
+            spatial_sim = (
+                self._compute_spatial_similarity(
+                    positions.get(track_id), person.spatial_features.get(camera_id)
+                )
+                if positions
+                else 0
+            )
+            temporal_sim = self._compute_temporal_similarity(
+                current_time.timestamp(), person.temporal_features.get(camera_id, 0)
+            )
+            movement_sim = self._compute_movement_pattern_similarity(
+                track_id, global_id
+            )
+
+            # Weighted combination of similarities
+            total_sim = (
+                self.weights["appearance"] * appearance_sim
+                + self.weights["spatial"] * spatial_sim
+                + self.weights["temporal"] * temporal_sim
+                + self.weights["movement"] * movement_sim
+            )
+
+            # Consider reactivating recently inactive tracks with high similarity
+            if (
+                person.inactive_time > timedelta(0)
+                and total_sim > self.reactivation_threshold
+            ):
+                total_sim *= 1.2  # Boost score for potential reactivation
+
+            if total_sim > best_score and total_sim > self.reid_threshold:
+                best_score = total_sim
+                best_match = global_id
+
+        if best_match:
+            # Update existing identity
+            self._update_existing_track(
+                best_match, track_id, crop, camera_id, positions, current_time
+            )
+            self.camera_to_global[(camera_id, track_id)] = best_match
+            return best_match
+        else:
+            # Create new identity
+            new_id = f"person_{len(self.person_features)}"
+            self.person_features[new_id] = PersonFeature(
+                global_id=new_id,
+                reid_features=features,
+                appearance_history=[features],
+                temporal_features={camera_id: current_time.timestamp()},
+                spatial_features=(
+                    {camera_id: positions.get(track_id)} if positions else {}
+                ),
+                camera_history={camera_id: [current_time]},
+                track_id_history=[track_id],
+                confidence=0.3,  # Initial confidence
+            )
+            self.camera_to_global[(camera_id, track_id)] = new_id
+            self.movement_patterns[new_id] = []
+            if track_id in positions:
+                self.movement_patterns[new_id].append(
+                    (current_time, positions[track_id])
+                )
+
+            # Extract face from crop and upload to cloud
+            try:
+                face_crop = self._extract_face(crop)
+                if face_crop is not None:
+                    asyncio.create_task(self._upload_face_to_cloud(face_crop, new_id))
+            except Exception as e:
+                logger.error(f"Error handling face upload for new person: {e}")
+
+            return new_id
+
+    def _extract_face(self, person_crop: np.ndarray) -> Optional[np.ndarray]:
+        """Extract face from person crop using MediaPipe"""
+        try:
+            # Ensure input image is uint8
+            if person_crop.dtype != np.uint8:
+                if np.issubdtype(person_crop.dtype, np.floating):
+                    person_crop = (person_crop * 255).clip(0, 255).astype(np.uint8)
+                else:
+                    person_crop = person_crop.astype(np.uint8)
+
+            with mp.solutions.face_detection.FaceDetection(
+                model_selection=1, min_detection_confidence=0.5
+            ) as face_detector:
+                # Ensure RGB conversion is safe
+                if len(person_crop.shape) == 3:
+                    rgb_crop = cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB)
+                else:
+                    logger.warning("Invalid image format for face detection")
+                    return None
+
+                # Check minimum size
+                if rgb_crop.shape[0] < 32 or rgb_crop.shape[1] < 32:
+                    logger.debug("Person crop too small for face detection")
+                    return None
+
+                results = face_detector.process(rgb_crop)
+
+                if results.detections:
+                    detection = results.detections[0]
+                    bbox = detection.location_data.relative_bounding_box
+
+                    h, w = rgb_crop.shape[:2]
+                    x = max(0, int(bbox.xmin * w))
+                    y = max(0, int(bbox.ymin * h))
+                    width = min(w - x, int(bbox.width * w))
+                    height = min(h - y, int(bbox.height * h))
+
+                    if width <= 0 or height <= 0:
+                        return None
+
+                    face_crop = person_crop[y:y+height, x:x+width]
+                    if face_crop.size > 0:
+                        face_crop = cv2.resize(face_crop, (112, 112))
+                        return face_crop.astype(np.uint8)
+
             return None
 
-    def get_person_info(self, global_id: str) -> Optional[PersonFeature]:
-        """Get information about a person by their global ID"""
-        return self.person_features.get(global_id)
+        except Exception as e:
+            logger.error(f"Error extracting face: {e}")
+            return None
 
     def _cleanup_old_features(self, current_time: datetime):
-        """Remove features that are too old"""
+        """Clean up old features with improved logic"""
         expired_ids = []
-        expired_camera_tracks = []
+        for global_id, person in self.person_features.items():
+            time_since_last_seen = current_time - person.last_seen
 
-        for global_id, feature_data in self.person_features.items():
-            if current_time - feature_data.last_seen > self.max_feature_age:
+            if time_since_last_seen > self.max_feature_age:
                 expired_ids.append(global_id)
-                # Find and mark associated camera tracks for removal
-                for camera_track, g_id in self.camera_to_global.items():
-                    if g_id == global_id:
-                        expired_camera_tracks.append(camera_track)
+            elif time_since_last_seen > timedelta(minutes=5):
+                # Mark as inactive but don't remove yet
+                person.inactive_time = time_since_last_seen
+                person.confidence *= self.confidence_decay_rate
 
-        # Remove expired entries
+        # Remove expired identities
         for global_id in expired_ids:
             del self.person_features[global_id]
-        for camera_track in expired_camera_tracks:
-            del self.camera_to_global[camera_track]
+            # Clean up related mappings
+            self.camera_to_global = {
+                k: v for k, v in self.camera_to_global.items() if v != global_id
+            }
+            if global_id in self.movement_patterns:
+                del self.movement_patterns[global_id]
+
+    def _match_or_create_identity(
+        self,
+        track_id: int,
+        features: np.ndarray,
+        camera_id: str,
+        positions: Optional[Dict[int, Tuple[float, float]]],
+        current_time: datetime,
+    ) -> Optional[str]:
+        """Match to existing identity or create new one"""
+        # Check if we already have a mapping for this track_id
+        if (camera_id, track_id) in self.camera_to_global:
+            global_id = self.camera_to_global[(camera_id, track_id)]
+            if global_id in self.person_features:
+                self._update_existing_track(
+                    global_id, track_id, features, camera_id, positions, current_time
+                )
+                return global_id
+
+        # Try to match with existing identities
+        return self._handle_new_detection(
+            track_id, features, camera_id, positions, current_time
+        )
+
+    @lru_cache(maxsize=128)
+    def _compute_spatial_similarity(
+        self, current_pos: Optional[Tuple[float, float]], 
+        last_pos: Optional[Tuple[float, float]]
+    ) -> float:
+        """Cached spatial similarity computation"""
+        if current_pos is None or last_pos is None:
+            return 0.0
+        
+        distance = np.sqrt(
+            (current_pos[0] - last_pos[0]) ** 2 + 
+            (current_pos[1] - last_pos[1]) ** 2
+        )
+        return 1.0 / (1.0 + distance)
+
+    def _compute_temporal_similarity(
+        self, current_time: float, last_time: float
+    ) -> float:
+        """Compute temporal similarity between timestamps"""
+        if last_time == 0:
+            return 0.0
+        
+        time_diff = abs(current_time - last_time)
+        return np.exp(-time_diff / 3600.0)  # Decay over 1 hour
+
+    def _is_stopping_point(
+        self, pos1: Tuple[float, float], pos2: Tuple[float, float], threshold: float = 0.1
+    ) -> bool:
+        """Determine if two positions indicate a stopping point"""
+        distance = np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
+        return distance < threshold

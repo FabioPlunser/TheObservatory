@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from logging_config import setup_logger
 from nats_client import NatsClient, Commands
-from reid_implementation import OptimizedCrossCameraTracker
+from reid_implementation import Reid
 from datetime import datetime
 from database import Database
 
@@ -65,7 +65,7 @@ class OptimizedPersonTracker:
         # Performance monitoring
         self.processing_times = deque(maxlen=100)
 
-        self.cross_camera_tracker: Optional[OptimizedCrossCameraTracker] = None
+        self.cross_camera_tracker: Optional[Reid] = None
 
         self.company_id = company_id
         self.camera_id = camera_id
@@ -113,7 +113,7 @@ class OptimizedPersonTracker:
 
                 futures = []
                 for xyxy, class_id, track_id in zip(xyxys, classes, track_ids):
-                    if int(class_id) != 0:  # Skip non-person detections
+                    if int(class_id) != 0:
                         continue
 
                     track_id = int(track_id)
@@ -121,6 +121,16 @@ class OptimizedPersonTracker:
                     w = x2 - x1
                     h = y2 - y1
                     bbox = np.array([x1, y1, w, h])
+
+                    # Call cross-camera reid
+                    if self.cross_camera_tracker:
+                        global_ids = self.cross_camera_tracker.update(
+                            camera_id=self.camera_id, person_crops=person_crops
+                        )
+                        # Assign global IDs
+                        for t_id, g_id in global_ids.items():
+                            if t_id in self.tracked_persons:
+                                self.tracked_persons[t_id].global_id = g_id
 
                     if track_id in self.tracked_persons:
                         person = self.tracked_persons[track_id]
@@ -141,8 +151,8 @@ class OptimizedPersonTracker:
             self._cleanup_stale_tracks(current_time)
             self.processing_times.append(time.time() - start_time)
 
-            for new_track in new_tracks:
-                asyncio.run(self._handle_face_recognition(new_track, frame))
+            # for new_track in new_tracks:
+            #     asyncio.run(self._handle_face_recognition(new_track, frame))
 
             # After creating or updating person tracks, gather person crops
             person_crops = []
@@ -150,16 +160,6 @@ class OptimizedPersonTracker:
                 x, y, w, h = map(int, person.bbox)
                 crop = frame[y : y + h, x : x + w]
                 person_crops.append((track_id, crop))
-
-            # Call cross-camera reid
-            if self.cross_camera_tracker:
-                global_ids = self.cross_camera_tracker.update(
-                    camera_id=self.camera_id, person_crops=person_crops
-                )
-                # Assign global IDs
-                for t_id, g_id in global_ids.items():
-                    if t_id in self.tracked_persons:
-                        self.tracked_persons[t_id].global_id = g_id
 
         except Exception as e:
             logger.error(f"Error updating tracker: {e}")
@@ -266,22 +266,22 @@ class OptimizedPersonTracker:
 
             # Upload face image
             # try:
-                # async with aiohttp.ClientSession() as session:
-                #     async with session.put(
-                #         response["url"],
-                #         data=img_bytes,
-                #         headers={"Content-Type": "*"},
-                #         timeout=30,
-                #     ) as resp:
-                #         if resp.status != 200:
-                #             error_text = await resp.text()
-                #             logger.error(f"Failed to upload face image: {error_text}")
-                #             track.recognition_status = "pending"
-                #             return
+            # async with aiohttp.ClientSession() as session:
+            #     async with session.put(
+            #         response["url"],
+            #         data=img_bytes,
+            #         headers={"Content-Type": "*"},
+            #         timeout=30,
+            #     ) as resp:
+            #         if resp.status != 200:
+            #             error_text = await resp.text()
+            #             logger.error(f"Failed to upload face image: {error_text}")
+            #             track.recognition_status = "pending"
+            #             return
 
-                #         logger.info(
-                #             f"Successfully uploaded face image for face_id {track.face_id}"
-                #         )
+            #         logger.info(
+            #             f"Successfully uploaded face image for face_id {track.face_id}"
+            #         )
             # except Exception as e:
             #     logger.error(f"Error uploading face image: {e}")
             #     track.recognition_status = "pending"
