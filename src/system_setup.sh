@@ -109,8 +109,8 @@ setup_frontend() {
         bun run build
         echo "✅ Frontend setup complete using bun!"
     elif command -v npm >/dev/null 2>&1; then
-        npm install
-        npm run build
+        sudo npm install
+        sudo npm run build
         echo "✅ Frontend setup complete using npm!"
     else
         echo "❌ Neither bun nor npm found. Please install one of them."
