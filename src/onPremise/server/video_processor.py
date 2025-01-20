@@ -226,10 +226,9 @@ class VideoProcessor:
         frame_queue: mp.Queue,
         stop_event: threading.Event,
     ):
-        # Fix the tuple syntax error
-        max_retries = 3  # Remove the tuple syntax
-        retry_delay = 2.0  # Remove the tuple syntax
-        exponential_backoff = True
+        max_retries: int = 3
+        retry_delay: float = 2.0
+        exponential_backoff: bool = True
 
         cap = None
         frame_counter = 0
