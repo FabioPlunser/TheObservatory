@@ -2,7 +2,6 @@ import asyncio
 import aiohttp
 import logging
 import uuid
-import ipaddress
 
 from fastapi import (
     APIRouter,

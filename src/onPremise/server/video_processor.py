@@ -7,16 +7,15 @@ import queue
 import os
 import threading
 import multiprocessing as mp
+import colorsys
 
 from typing import Dict, List, Optional, Tuple
 from ultralytics import YOLO
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict, deque
 from logging_config import setup_logger
-from person_tracker import OptimizedPersonTracker
-from rtsp_reader import RTSPReader
+from contextlib import nullcontext
 from reid_implementation import Reid
-import colorsys
 
 setup_logger()
 logger = logging.getLogger("VideoProcessor")

@@ -22,4 +22,3 @@ tensorboard
 netifaces
 mediapipe
 ffmpeg
-omegaconf
