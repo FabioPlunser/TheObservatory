@@ -6,6 +6,7 @@ import websockets
 import json
 import pygame
 import os
+from datetime import datetime 
 from edge_server_discover import EdgeServerDiscovery
 
 logging.basicConfig(
@@ -117,6 +118,7 @@ class Alarm:
                     async for message in websocket:
                         try:
                             data = json.loads(message)
+                            logger.info(f"WebSocket message received: {data}")
                             if data.get("active") == "true":
                                 self.alarm_active = True
                                 asyncio.create_task(self.trigger_alarm())
@@ -152,20 +154,23 @@ class Alarm:
     async def trigger_alarm(self):
         """Activate the alarm"""
         logger.info("Alarm triggered!")
+        start_time = datetime.now().isoformat()
         while self.alarm_active:
             if self.sound:
                 self.sound.play()
+            logger.info(f"Alarm is sounding at {datetime.now().isoformat()}")
             await asyncio.sleep(1)  # Non-blocking sleep
 
         # Stop the sound when alarm_active becomes False
         if self.sound:
             self.sound.stop()
-        logger.info("Alarm stopped")
+        end_time = datetime.now().isoformat()
+        logger.info(f"Alarm stopped at {end_time}")
 
     async def stop_alarm(self):
         """Deactivate the alarm"""
         self.alarm_active = False
-        logger.info("Alarm stopped")
+        logger.info("Alarm deactivated")
 
     async def start(self):
         """Start the alarm client with automatic reconnection"""
