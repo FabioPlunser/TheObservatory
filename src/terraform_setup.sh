@@ -15,7 +15,7 @@ test_aws_credentials() {
     fi
 
     # Check for token expiration using terraform
-    pushd terraform >/dev/null
+    pushd .terraform/ >/dev/null
     if terraform providers 2>&1 | grep -q "ExpiredToken"; then
         echo "❌ Token has expired"
         popd >/dev/null
@@ -79,7 +79,7 @@ apply_terraform() {
     echo "Validating AWS credentials..."
     setup_aws_credentials
     
-    pushd terraform >/dev/null
+    pushd .terraform/ >/dev/null
     
     if [ ! -f "$KEY_PAIR_PATH" ]; then
         echo "❌ SSH key not found at: $KEY_PAIR_PATH"
@@ -113,8 +113,8 @@ apply_terraform() {
 
 destroy_terraform() {
     echo "🛑 Destroying Terraform-managed infrastructure..."
-    pushd terraform >/dev/null
-    
+    pushd terraform/ >/dev/null
+
     # Check credentials before proceeding
     echo "Validating AWS credentials..."
     setup_aws_credentials
@@ -127,7 +127,7 @@ destroy_terraform() {
     fi
 
     KEY_PATH_ABS=$(readlink -f "$KEY_PAIR_PATH")
-    
+
     if ! terraform destroy -var "private_pem_key=$KEY_PATH_ABS" -auto-approve; then
         echo "❌ Failed to destroy Terraform configuration. Please check your AWS credentials and try again."
         popd >/dev/null
