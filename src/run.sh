@@ -111,26 +111,13 @@ trap cleanup EXIT SIGINT SIGTERM
 # Set up cleanup trap
 trap cleanup SIGINT SIGTERM EXIT
 
-# Prüfen, ob das Skript als root ausgeführt wird
+#check if script is executed as root
 if [ "$EUID" -ne 0 ]; then
   echo "Dieses Skript muss mit sudo ausgeführt werden. Versuche es erneut mit sudo..."
   # Skript neu mit sudo starten
   exec sudo bash "$0" "$@"
   exit
 fi
-
-#if [ "$EUID" -ne 0 ]; then
-#    if sudo true; then
-#        echo "Starting with sudo"
-#    else
-#        echo "Please start this script with sudo rights or enter you password:"
-#        sudo echo ""
-#        exit 1
-#    fi
-#    sudo echo ""
-#else
-#  echo ""
-#  fi
 echo "🚀 Starting setup script..."
 
 # Handle Terraform operations
