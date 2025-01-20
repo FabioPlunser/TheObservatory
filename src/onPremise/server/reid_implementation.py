@@ -173,25 +173,21 @@ class Reid:
             return []
 
         try:
-            # Process in smaller sub-batches for better memory usage
             sub_batch_size = 8
             all_features = []
 
             for i in range(0, len(frames), sub_batch_size):
                 sub_batch = frames[i:i + sub_batch_size]
-
-                # Parallel preprocessing
+                
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     processed_frames = list(executor.map(self._preprocess_frame, sub_batch))
 
-                # Stack and process sub-batch
                 batch = torch.stack(processed_frames).to(self.device)
-
-                # Ensure the input tensor is of the same type as the model weights
+                
                 if self.device.type == 'cuda':
-                    batch = batch.half()  # Convert to half precision if using CUDA
+                    batch = batch.half()
 
-                with torch.inference_mode(), torch.cuda.amp.autocast(enabled=True):
+                with torch.inference_mode(), torch.amp.autocast('cuda', enabled=True):
                     features = self.reid_model(batch)
                     features = torch.nn.functional.normalize(features, dim=1)
                     all_features.extend(features.cpu().numpy())
@@ -631,31 +627,31 @@ class Reid:
     def _extract_face(self, person_crop: np.ndarray) -> Optional[np.ndarray]:
         """Extract face from person crop using MediaPipe"""
         try:
-            # Ensure input image is uint8
+            # Ensure input image is valid
+            if person_crop is None or person_crop.size == 0:
+                return None
+
+            # Convert to RGB if necessary and ensure uint8
+            if len(person_crop.shape) != 3:
+                logger.warning("Invalid image shape for face detection")
+                return None
+
             if person_crop.dtype != np.uint8:
-                if np.issubdtype(person_crop.dtype, np.floating):
-                    person_crop = (person_crop * 255).clip(0, 255).astype(np.uint8)
-                else:
-                    person_crop = person_crop.astype(np.uint8)
+                person_crop = (person_crop * 255).clip(0, 255).astype(np.uint8)
+
+            rgb_crop = cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB)
+
+            # Check minimum size
+            if rgb_crop.shape[0] < 32 or rgb_crop.shape[1] < 32:
+                return None
 
             with mp.solutions.face_detection.FaceDetection(
-                model_selection=1, min_detection_confidence=0.5
+                model_selection=1, 
+                min_detection_confidence=0.5
             ) as face_detector:
-                # Ensure RGB conversion is safe
-                if len(person_crop.shape) == 3:
-                    rgb_crop = cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB)
-                else:
-                    logger.warning("Invalid image format for face detection")
-                    return None
-
-                # Check minimum size
-                if rgb_crop.shape[0] < 32 or rgb_crop.shape[1] < 32:
-                    logger.debug("Person crop too small for face detection")
-                    return None
-
                 results = face_detector.process(rgb_crop)
 
-                if results.detections:
+                if results and results.detections:
                     detection = results.detections[0]
                     bbox = detection.location_data.relative_bounding_box
 
@@ -665,13 +661,9 @@ class Reid:
                     width = min(w - x, int(bbox.width * w))
                     height = min(h - y, int(bbox.height * h))
 
-                    if width <= 0 or height <= 0:
-                        return None
-
-                    face_crop = person_crop[y:y+height, x:x+width]
-                    if face_crop.size > 0:
-                        face_crop = cv2.resize(face_crop, (112, 112))
-                        return face_crop.astype(np.uint8)
+                    if width > 0 and height > 0:
+                        face_crop = person_crop[y:y+height, x:x+width]
+                        return cv2.resize(face_crop, (112, 112))
 
             return None
 

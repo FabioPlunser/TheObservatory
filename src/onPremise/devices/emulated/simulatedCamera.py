@@ -87,36 +87,22 @@ class SimulatedCamera:
         return [f for f in os.listdir(set_path) if f.endswith(".avi")]
 
     def get_ffmpeg_input_args(self, video_paths: List[str]) -> tuple[List[str], str]:
-            """Use FFmpeg's pipe protocol to read the concat list from memory.
-            Returns tuple of (ffmpeg_args, concat_content)"""
-            if not video_paths:
-                # Fallback to test source if no videos provided
-                return [
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    f"testsrc=size={self.frame_width}x{self.frame_height}:rate={self.frame_rate}",
-                    "-pix_fmt",
-                    "yuv420p",
-                ], ""
-            
-            concat_content = "".join(
-                f"file '{str(Path(vp).resolve()).replace('\\', '/')}'\n"
-                for vp in video_paths
-            )
-            
+        """Get FFmpeg input arguments for video streaming."""
+        if not video_paths:
             return [
-                "-fflags", "nobuffer",
-                "-flags", "low_delay",
-                "-safe", "0",
-                "-protocol_whitelist", "pipe,file",
-                "-f", "concat",
-                "-re",
-                "-stream_loop", "-1",
-                "-i", "pipe:0",  # Read from stdin
-                "-filter:v",
-                f"setpts=PTS/{self.frame_rate}/TB",
-            ], concat_content
+                "-f", "lavfi",
+                "-i", f"testsrc=size={self.frame_width}x{self.frame_height}:rate={self.frame_rate}",
+                "-pix_fmt", "yuv420p",
+            ], ""
+
+        # Use just the first video file directly
+        video_path = str(Path(video_paths[0]).resolve())
+        logger.info(f"Using video file: {video_path}")
+        
+        return [
+            "-re",  # Read input at native frame rate
+            "-i", video_path,  # Input file
+        ], ""
 
     def get_ffmpeg_output_args(self, rtsp_url: str) -> List[str]:
         """Get optimized FFmpeg output arguments with GPU support."""
@@ -197,27 +183,33 @@ class SimulatedCamera:
             await asyncio.gather(*log_tasks)
 
     async def start_streaming(self, video_infos: List[VideoInfo], stop_event: Optional[asyncio.Event] = None):
-        """Start streaming videos using in-memory concat list."""
-        if not video_infos or not all(Path(info.full_path).exists() for info in video_infos):
-            logger.error("Invalid or missing video files.")
+        """Start streaming videos."""
+        if not video_infos:
+            logger.error("No video info provided")
+            return
+
+        video_info = video_infos[0]  # Take first video
+        if not Path(video_info.full_path).exists():
+            logger.error(f"Video file does not exist: {video_info.full_path}")
             return
 
         try:
-            paths_to_stream = [info.full_path for info in video_infos]
-            input_args, concat_content = self.get_ffmpeg_input_args(paths_to_stream)
+            logger.info(f"Starting stream for video: {video_info.full_path}")
+            input_args, _ = self.get_ffmpeg_input_args([video_info.full_path])
             output_args = self.get_ffmpeg_output_args(self.rtsp_url)
 
+            # Log the complete FFmpeg command for debugging
+            ffmpeg_cmd = ["ffmpeg", "-hide_banner"] + input_args + output_args
+            logger.info(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
+
             process = await asyncio.create_subprocess_exec(
-                "ffmpeg",
-                "-hide_banner",
-                *input_args,
-                *output_args,
+                *ffmpeg_cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            await self._handle_ffmpeg_process(process, concat_content, stop_event)
+            await self._handle_ffmpeg_process(process, "", stop_event)
 
         except Exception as e:
             logger.error(f"Streaming error for camera {self.camera_id}: {str(e)}")
