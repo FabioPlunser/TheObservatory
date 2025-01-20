@@ -79,9 +79,14 @@ class VideoProcessor:
 
         # Start processing threads
         self._start_processing_threads()
+        
+        self.FRAME_EXPIRE_TIME = 2  # Reduced from 5 to 2 seconds
+        
+        # Frame deduplication
+        self.processed_frames = {}
+        self.frame_history = {}
 
-        monitor_thread = threading.Thread(target=self._monitor_performance, daemon=True)
-        monitor_thread.start()
+
 
     def _init_device(self) -> torch.device:
         if torch.cuda.is_available():
@@ -127,48 +132,54 @@ class VideoProcessor:
         return model
 
     def _batch_collector(self):
-        """Collect frames into batches efficiently"""
+        """Collect frames into batches with improved synchronization"""
         while not self.stop_event.is_set():
             try:
                 batch_frames = []
                 batch_metadata = []
+                current_time = time.time()
 
-                # Collect frames from all active cameras
                 for camera_id in self.active_cameras.copy():
                     try:
-                        pipe = self.redis_client.pipeline()
-                        # Get multiple frames at once
-                        for _ in range(2):  # Try to get 2 frames per camera
-                            pipe.rpop(self.FRAME_QUEUE_KEY.format(camera_id=camera_id))
-                        frame_datas = pipe.execute()
+                        # Get frame with timeout
+                        frame_data = self.redis_client.rpop(
+                            self.FRAME_QUEUE_KEY.format(camera_id=camera_id)
+                        )
 
-                        for frame_data in frame_datas:
-                            if frame_data:
-                                data = self._deserialize_frame_data(frame_data)
-                                if data:
-                                    frame = self._preprocess_frame(data)
-                                    if frame is not None:
-                                        batch_frames.append(frame)
-                                        batch_metadata.append(data)
+                        if frame_data:
+                            data = self._deserialize_frame_data(frame_data)
+                            if data:
+                                # Check frame timestamp
+                                if current_time - data["timestamp"] > 1.0:
+                                    continue  # Skip old frames
 
-                                if len(batch_frames) >= self.batch_size:
-                                    break
+                                frame = self._preprocess_frame(data)
+                                if frame is not None:
+                                    batch_frames.append(frame)
+                                    batch_metadata.append(data)
 
-                    except RedisError as e:
+                        if len(batch_frames) >= self.batch_size:
+                            break
+
+                    except redis.RedisError as e:
                         logger.error(f"Redis error in batch collection: {e}")
 
                 if batch_frames:
-                    # Store batch in Redis for processing
-                    batch_id = str(time.time())
+                    # Store batch with timestamp
+                    batch_id = str(current_time)
                     try:
                         self.redis_client.setex(
                             f"batch:{batch_id}",
                             self.FRAME_EXPIRE_TIME,
                             self._serialize_frame_data(
-                                {"frames": batch_frames, "metadata": batch_metadata}
+                                {
+                                    "frames": batch_frames,
+                                    "metadata": batch_metadata,
+                                    "timestamp": current_time,
+                                }
                             ),
                         )
-                    except RedisError as e:
+                    except redis.RedisError as e:
                         logger.error(f"Redis error storing batch: {e}")
 
                 time.sleep(0.001)  # Prevent CPU overuse
@@ -401,11 +412,13 @@ class VideoProcessor:
         logger.info(f"Frame reader stopped for camera {camera_id}")
 
     def _process_batch(self, frames: List[np.ndarray], metadata: List[dict]):
-        """Process batch with optimized GPU memory usage"""
+        """Process batch with improved frame handling"""
         try:
+            results = []
+
             # Process through YOLO with mixed precision
             with torch.amp.autocast("cuda", enabled=True):
-                results = self.model.track(
+                detections = self.model.track(
                     source=frames,
                     conf=0.5,
                     iou=0.7,
@@ -415,37 +428,49 @@ class VideoProcessor:
                     verbose=False,
                 )
 
-            # Process results in parallel
-            futures = []
-            for result, meta in zip(results, metadata):
-                future = self.postprocess_pool.submit(
-                    self._process_detections,
-                    frames[metadata.index(meta)],
-                    result,
-                    meta["camera_id"],
+            # Process results ensuring temporal order
+            frame_results = []
+            for detection, meta in zip(detections, metadata):
+                camera_id = meta["camera_id"]
+                timestamp = meta["timestamp"]
+
+                # Skip if we've recently processed a very similar frame
+                frame = frames[metadata.index(meta)]
+                if self._is_duplicate_frame(camera_id, frame, timestamp):
+                    continue
+
+                # Store frame in history
+                self._cleanup_old_frames(camera_id)
+                if camera_id not in self.frame_history:
+                    self.frame_history[camera_id] = {}
+                self.frame_history[camera_id][timestamp] = frame
+
+                # Process detection
+                processed_frame = self._process_detections(frame, detection, camera_id)
+                if processed_frame is not None:
+                    frame_results.append((processed_frame, meta, timestamp))
+
+            # Sort by timestamp and store
+            frame_results.sort(key=lambda x: x[2])
+            for processed_frame, meta, _ in frame_results:
+                camera_id = meta["camera_id"]
+
+                # Encode and store frame
+                _, buffer = cv2.imencode(
+                    ".jpg", processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 80]
                 )
-                futures.append((future, meta["camera_id"]))
 
-            # Store results as they complete
-            for future, camera_id in futures:
-                try:
-                    processed_frame = future.result(timeout=1.0)
-                    if processed_frame is not None:
-                        _, buffer = cv2.imencode(
-                            ".jpg", processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 80]
-                        )
+                # Use pipeline for atomic operations
+                pipe = self.redis_client.pipeline()
+                pipe.setex(
+                    self.PROCESSED_FRAME_KEY.format(camera_id=camera_id),
+                    self.FRAME_EXPIRE_TIME,
+                    buffer.tobytes(),
+                )
+                pipe.execute()
 
-                        self.redis_client.setex(
-                            self.PROCESSED_FRAME_KEY.format(camera_id=camera_id),
-                            self.FRAME_EXPIRE_TIME,
-                            buffer.tobytes(),
-                        )
-
-                        # Update FPS counter
-                        self._update_fps(camera_id)
-
-                except Exception as e:
-                    logger.error(f"Error processing result: {e}")
+                # Update FPS counter
+                self._update_fps(camera_id)
 
         except Exception as e:
             logger.error(f"Error in batch processing: {e}")
@@ -488,6 +513,44 @@ class VideoProcessor:
             except Exception as e:
                 logger.error(f"Error in performance monitoring: {e}")
                 time.sleep(1)
+
+    def _cleanup_old_frames(self, camera_id: str):
+        """Remove old frames from history"""
+        current_time = time.time()
+        if camera_id in self.frame_history:
+            self.frame_history[camera_id] = {
+                ts: frame
+                for ts, frame in self.frame_history[camera_id].items()
+                if current_time - ts < 2.0  # Keep only last 2 seconds
+            }
+
+    def _is_duplicate_frame(
+        self, camera_id: str, frame: np.ndarray, timestamp: float
+    ) -> bool:
+        """Check if frame is a duplicate using frame difference"""
+        if camera_id not in self.frame_history:
+            self.frame_history[camera_id] = {}
+            return False
+
+        # Get the most recent frame
+        recent_frames = sorted(self.frame_history[camera_id].items(), reverse=True)
+        if not recent_frames:
+            return False
+
+        last_frame = recent_frames[0][1]
+
+        # Compare frames
+        diff = cv2.absdiff(frame, last_frame)
+        mean_diff = np.mean(diff)
+
+        # If frames are too similar and too close in time
+        if (
+            mean_diff < 2.0
+            and timestamp - recent_frames[0][0] < self.min_frame_interval
+        ):
+            return True
+
+        return False
 
     def _process_detections(self, frame, result, camera_id):
         """Process detections with ReID"""
