@@ -1,0 +1,277 @@
+%% Begin slides template file
+\documentclass[11pt,t,usepdftitle=false,aspectratio=169]{beamer}
+%% ------------------------------------------------------------------
+%% - aspectratio=43: Set paper aspect ratio to 4:3.
+%% - aspectratio=169: Set paper aspect ratio to 16:9.
+%% ------------------------------------------------------------------
+
+\usetheme[nototalframenumber,foot,logo]{uibk}
+%% ------------------------------------------------------------------
+%% - foot: 	Add a footer line for conference name and date.
+%% - logo: Add the university logo in the footer (only if 'foot' set).
+%% - bigfoot/sasquatch: Larger font size in footer.
+%% - nototalslidenumber: Hide the total number of slides (only if 'foot' set)
+%% - license: Add CC-BY license symbol to title slide (e.g., for conference uploads)
+%%   (TODO: At the moment no other licenses are supported.)
+%% - licenseall: Add CC-BY license symbol to all subsequent slides slides
+%% - url: use \url{} rather than \href{} on the title page
+%% - nosectiontitlepage: switches off the behaviour of inserting the
+%%   titlepage every time a \section is called. This makes it possible to
+%%   use more than one section + thanks page and a ToC off by default.
+%%   If the 'nosectiontitlepage' is set you can create UIBK title slides
+%%   using the command '\uibktitlepage{}' in your document to create
+%%   one or multiple title slides.
+%% ------------------------------------------------------------------
+
+%% ------------------------------------------------------------------
+%% The official corporate colors of the university are predefined and
+%% can be used for e.g., highlighting something. Simply use
+%% \color{uibkorange} or \begin{color}{uibkorange} ... \end{color}
+%% Defined colors are:
+%% - uibkblue, uibkbluel, uibkorange, uibkorangel, uibkgray, uibkgraym, uibkgrayl
+%% The frametitle color can be easily adjusted e.g., to black with
+%% \setbeamercolor{titlelike}{fg=black}
+%% ------------------------------------------------------------------
+
+%\setbeamercolor{verbcolor}{fg=uibkorange}
+%% ------------------------------------------------------------------
+%% Setting a highlight color for verbatim output such as from
+%% the commands \pkg, \email, \file, \dataset 
+%% ------------------------------------------------------------------
+
+
+%% information for the title page ('short title' is the pdf-title that is shown in viewer's titlebar)
+\title[Your Short Title Here]{Presentation Slides: With Your Title Here}
+\subtitle{The {\LaTeX} Beamer Implementation}
+\URL{www.uibk.ac.at/statistics}
+
+\author[Gabriele \& Max Mustermann]{Gabriele Mustermann, Max Mustermann}
+%('short author' is the pdf-metadata Author)
+%% If multiple authors are required and the font size is too large you
+%% can overrule the font size of author and url by calling:
+%\setbeamerfont{author}{size*={10pt}{10pt},series=\mdseries}
+%\setbeamerfont{url}{size*={10pt}{10pt},series=\mdseries}
+%\URL{}
+%\subtitle{}
+
+\footertext{{\LaTeX} beamer theme}
+\date{2017-07-25}
+
+\headerimage{3}
+%% ------------------------------------------------------------------
+%% The theme offers four different header images based on the
+%% corporate design of the university of innsbruck. Currently
+%% 1, 2, 3 and 4 is allowed as input to \headerimage{...}. Default
+%% or fallback is '1'.
+%% ------------------------------------------------------------------
+
+\begin{document}
+
+%% ALTERNATIVE TITLEPAGE
+%% The next block is how you add a titlepage with the 'nosectiontitlepage' option, which switches off
+%% the default behavior of creating a titlepage every time a \section{} is defined.
+%% Then you can use \section{} as it's originally intended, including a table of contents.
+% \usebackgroundtemplate{\includegraphics[width=\paperwidth,height=\paperheight]{titlebackground.pdf}}
+% \begin{frame}[plain]
+%     \titlepage
+% \end{frame}
+% \addtocounter{framenumber}{-1}
+% \usebackgroundtemplate{}
+
+%% Table of Contents, if wanted:
+%% this requires the 'nosectiontitlepage' option and setting \section{}'s as you want them to appear here.
+%% Subsections and subordinates are suppressed in the .sty at the moment, search
+%% for \setbeamertemplate{subsection} and replace the empty {} with whatever you want.
+%% Although it's probably too much for a presentation, maybe for a lecture.
+%% Please note: \maketitle allows you to render a uibk-style title page wherever needed
+%% in the document even if 'nosectiontitlepage' option is set (note: \maketitle will not
+%% create a new section and is therefore not included in \tableofcontents (if used).
+% \maketitle
+% \begin{frame}
+%     \vspace*{1cm plus 1fil}
+%     \tableofcontents
+%     \vspace*{0cm plus 1fil}
+% \end{frame}
+
+
+%% this sets the first PDF bookmark and triggers generation of the title page
+\section{Bookmark Title}
+
+%% this just generates PDF bookmarks
+\subsection{Overview}
+
+%% first slide
+\begin{frame}
+\frametitle{Overview}
+
+  \textbf{Content:} Aligned with the header above and the text from the university logo in the footer.
+
+  \bigskip
+
+  \textbf{Subsequently:} A tour of the most important functionality in the beamer theme.
+
+\end{frame}
+
+
+%% next PDF bookmark
+\subsection{Introduction}
+
+
+%% second slide
+\begin{frame}
+\frametitle{Introduction}
+
+   
+   \textbf{Itemized lists:}
+   \begin{itemize}
+      \item Level 1
+      \begin{itemize}
+         \item Level 2
+         \begin{itemize}
+            \item Level 3
+         \end{itemize}
+      \end{itemize}
+   \end{itemize}
+
+\bigskip
+
+   \textbf{Enumerated lists:}
+   \begin{enumerate}
+      \item First item
+      \item Second item
+      \item Third item
+   \end{enumerate}
+
+\end{frame}
+
+
+%% next PDF bookmark
+\subsection{Formatting}
+
+\begin{frame}[fragile]
+\frametitle{Formatting}
+
+   \textbf{Highlighting:} \textbf{bold}, \textit{italic}, {\color{uibkblue} UIBK blue}, {\color{uibkorange} UIBK orange}, \dots
+
+   \bigskip
+   
+   \textbf{Predefined colors:}
+   
+   \smallskip
+   
+   \fcolorbox{black}{uibkblue}{\rule{0pt}{.6em}\rule{.5em}{0pt}} \quad blue (\verb|uibkblue|) \\[1mm]
+   \fcolorbox{black}{uibkbluel}{\rule{0pt}{.6em}\rule{.5em}{0pt}} \quad light blue (\verb|uibkbluel|) \\[1mm]
+   \fcolorbox{black}{uibkorange}{\rule{0pt}{.6em}\rule{.5em}{0pt}} \quad orange (\verb|uibkorange|) \\[1mm]
+   \fcolorbox{black}{uibkorangel}{\rule{0pt}{.6em}\rule{.5em}{0pt}} \quad light orange (\verb|uibkorangel|) \\[1mm]
+   \fcolorbox{black}{uibkgray}{\rule{0pt}{.6em}\rule{.5em}{0pt}} \quad gray (\verb|uibkgray|) \\[1mm]
+   \fcolorbox{black}{uibkgraym}{\rule{0pt}{.6em}\rule{.5em}{0pt}} \quad medium gray (\verb|uibkgraym|) \\[1mm]
+   \fcolorbox{black}{uibkgrayl}{\rule{0pt}{.6em}\rule{.5em}{0pt}} \quad light gray (\verb|uibkgrayl|)
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Beamer blocks}
+
+   \begin{block}{Block}
+      This is a block.
+
+      Uses \verb|uibkblue| and \verb|uibkbluel|.
+   \end{block}
+
+\medskip
+
+   \begin{alertblock}{Alert block}
+      This is an alert block.
+
+      Uses \verb|uibkorange| and \verb|uibkorangel|.
+   \end{alertblock}
+
+\medskip
+
+   \begin{exampleblock}{Example block}
+      This is an example block.
+
+      Uses \verb|uibkgraym| and \verb|uibkgrayl|.
+   \end{exampleblock}
+
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Good to know}
+
+\textbf{Commands:} For code/data formatting provided by this beamer theme.
+
+\bigskip
+   
+   \begin{tabular}{ll}
+      \hline
+      Command & Output example \\
+      \hline
+      \verb|\fct{...}|     & \fct{example} \\
+      \verb|\class{...}|   & \class{example} \\
+      \verb|\pkg{...}|     & \pkg{example} \\
+      \verb|\email{...}|   & \email{example@email.org} \\
+      \verb|\doi{...}|     & \doi{10.1234/example} \\
+      \verb|\file{...}|    & \file{example} \\
+      \verb|\dataset{...}| & \dataset{example} \\
+      \hline
+   \end{tabular}
+
+\end{frame}
+
+
+\subsection{Installation}
+
+\begin{frame}[fragile]
+\frametitle{Installation}
+
+   \textbf{Presentation slides:}
+   \begin{itemize}
+      \item Copy both the file \file{beamerthemeuibk.sty} and the entire folder \file{\_images}.
+  
+      \item Either to your local working directory\dots
+  
+      \item \dots or to your TEXMF tree (\emph{recommended}), e.g., \file{texmf/tex/latex/uibk-beamer/}.
+  
+      \item Start with the file \file{slides.tex}, containing the sources for this demo
+        along with many useful hints and comments in the source code.
+    
+      \item Compile with \texttt{xelatex} or \texttt{pdflatex}.
+   \end{itemize}
+
+\medskip
+
+   \textbf{Posters:}
+   \begin{itemize}
+      \item Additionally copy \file{beamerthemeuibkposter.sty}.
+      \item Use \file{poster.tex} as the starting point.
+   \end{itemize}
+
+\end{frame}
+
+
+%% to show a last slide similar to the title slide: information for the last page
+\title{Thank you for your attention!}
+\subtitle{}
+\section{Thanks}
+
+
+%% appendix of 'extra' slides
+\appendix
+
+\begin{frame}
+\frametitle{Appendix 1}
+    This slide does not increase the total number of slides and can hold additional information
+    that you may be asked about after the end of the presentation.
+\end{frame}
+
+\begin{frame}
+\frametitle{Appendix 2}
+    This slide does not increase the total number of slides and can hold additional information
+    that you may be asked about after the end of the presentation.
+\end{frame}
+
+\end{document}
+
