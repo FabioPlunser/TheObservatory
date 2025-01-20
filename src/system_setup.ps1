@@ -35,8 +35,7 @@ function Setup-Python-Environment {
     # Install requirements based on checksum using correct paths
     $requirements_files = @(
         (Join-Path -Path $rootDir -ChildPath "TheObservatory\src\onPremise\server\requirements.txt"),
-        (Join-Path -Path $rootDir -ChildPath "TheObservatory\src\onPremise\devices\emulated\requirements.txt"),
-        (Join-Path -Path $rootDir -ChildPath "TheObservatory\src\cloud\requirements.txt")
+        (Join-Path -Path $rootDir -ChildPath "TheObservatory\src\onPremise\devices\emulated\requirements.txt")
     )
 
     Write-Host "Looking for requirements files in:"
@@ -71,6 +70,9 @@ function Setup-Python-Environment {
         }
         $checksum | Set-Content -Path $checksum_file -NoNewline
     }
+
+    Write-Host "📦 Installing PyTorch with CUDA support..."
+    pip install torch torchvision==0.20.1+cu118 torchaudio --index-url https://download.pytorch.org/whl/cu118
 }
 
 function Install-Dependencies {
@@ -217,7 +219,7 @@ function Start-Server {
                 break
             }
             if ($output_content -match "GET /api/alarm HTTP/1.1" -or 
-                $output_content -match "GET /api/cameras HTTP/1.1 200 OK") {
+                $output_content -match "GET /api/cameras HTTP/1.1") {
                 Write-Host "Detected /api/alarm request with 200 OK"
                 # Optionally set $serverStarted or another action
                 $serverStarted = $true
