@@ -7,16 +7,45 @@ import aiohttp
 import uuid
 import logging
 import threading
-import mediapipe as mp
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field
 from torchvision import transforms
-from collections import deque
+from collections import deque, OrderedDict
 from nats_client import NatsClient, Commands
 from database import Database
+from concurrent.futures import ThreadPoolExecutor
+from torch.cuda import amp
+import multiprocessing as mp
 
 logger = logging.getLogger("ReID")
+
+
+class LRUCache:
+    """Thread-safe LRU Cache for feature storage"""
+
+    def __init__(self, maxsize: int = 128):
+        self.cache = OrderedDict()
+        self.maxsize = maxsize
+        self._lock = threading.Lock()
+
+    def get(self, key, default=None):
+        with self._lock:
+            try:
+                value = self.cache.pop(key)
+                self.cache[key] = value
+                return value
+            except KeyError:
+                return default
+
+    def put(self, key, value):
+        with self._lock:
+            try:
+                self.cache.pop(key)
+            except KeyError:
+                if len(self.cache) >= self.maxsize:
+                    self.cache.popitem(last=False)
+            self.cache[key] = value
 
 
 @dataclass
@@ -37,14 +66,20 @@ class Reid:
         feature_history_size: int = 20,
         reid_threshold: float = 0.5,
         max_feature_age: int = 7200,
+        batch_size: int = 32,
         device=None,
     ):
         self.device = device if device else self._init_device()
         self.model = self._init_model()
+        self.scaler = amp.GradScaler()  # For automatic mixed precision
+
+        # Optimize transform pipeline
         self.transform = transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.Resize((256, 128)),
+                transforms.Resize(
+                    (128, 64), antialias=True
+                ),  # Smaller size, faster processing
                 transforms.Normalize(
                     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
                 ),
@@ -58,103 +93,111 @@ class Reid:
         self.reid_threshold = reid_threshold
         self.max_feature_age = timedelta(seconds=max_feature_age)
 
-        # Performance tracking
-        self.metrics = {
-            "feature_extraction_time": deque(maxlen=100),
-            "matching_time": deque(maxlen=100),
-            "reid_success_rate": deque(maxlen=100),
-        }
+        # Performance optimizations
+        self.batch_size = batch_size
+        self.feature_cache = LRUCache(maxsize=1000)
+        self.processing_lock = threading.Lock()
+
+        # Batch processing
+        self.batch_buffer = []
+        self.batch_metadata = []
 
         # Face detection and upload
         self.processed_faces = {}
         self.db = Database()
-        self.processing_lock = threading.Lock()
 
     def _init_device(self) -> torch.device:
         if torch.cuda.is_available():
             device = torch.device("cuda")
+            # Enable TF32 on Ampere GPUs
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.enabled = True
+            # Set memory allocator
+            torch.cuda.set_per_process_memory_fraction(0.8)  # Use 80% of GPU memory
         else:
             device = torch.device("cpu")
+            torch.set_num_threads(8)  # Optimize CPU threads
         return device
 
     def _init_model(self):
-        """Initialize a simple but effective CNN model for ReID"""
-        from torchvision.models import resnet18, ResNet18_Weights
+        """Initialize an efficient CNN model for ReID"""
+        from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
 
-        # Load pretrained ResNet18
-        model = resnet18(weights=ResNet18_Weights.DEFAULT)
+        # Load pretrained MobileNetV3 (smaller and faster than ResNet)
+        model = mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.DEFAULT)
 
-        # Modify the last layer for ReID
-        num_features = model.fc.in_features
-        model.fc = torch.nn.Linear(num_features, 512)
+        # Modify for ReID
+        num_features = model.classifier[-1].in_features
+        model.classifier[-1] = nn.Linear(num_features, 256)  # Smaller embedding size
 
         model = model.to(self.device).eval()
+
+        # Optimize for inference
+        if self.device.type == "cuda":
+            model = model.half()  # Convert to FP16 for faster inference
+
         return model
 
-    def _extract_features(self, frame: np.ndarray) -> np.ndarray:
-        """Extract features from a single frame"""
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = self.transform(frame_rgb).unsqueeze(0).to(self.device)
+    @torch.no_grad()
+    def _extract_features_batch(self, frames: List[np.ndarray]) -> List[np.ndarray]:
+        """Optimized batch feature extraction"""
+        if not frames:
+            return []
 
-        with torch.no_grad():
-            features = self.model(img)
-        return features.cpu().numpy()[0]
+        # Process images in parallel
+        processed_frames = []
+        for frame in frames:
+            processed_frames.append(self._preprocess_frame(frame))
+
+        # Stack and move to GPU
+        batch = torch.stack(processed_frames).to(self.device)
+        if self.device.type == "cuda":
+            batch = batch.half()
+
+        # Extract features with automatic mixed precision
+        with torch.amp.autocast(self.device.type):
+            features = self.model(batch)
+            features = nn.functional.normalize(features, dim=1)
+
+        return features.float().cpu().numpy()
+
+    def _preprocess_frame(self, frame: np.ndarray) -> torch.Tensor:
+        """Optimized frame preprocessing"""
+        frame = cv2.resize(frame, (64, 128), interpolation=cv2.INTER_AREA)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = frame.astype(np.float32) / 255.0
+        frame = self.transform(frame)
+        return frame
 
     def _compute_similarity(self, feat1: np.ndarray, feat2: List[np.ndarray]) -> float:
-        """Compute similarity between features"""
+        """Fast similarity computation using vectorized operations"""
         if not feat2:
             return 0.0
 
-        similarities = []
-        for hist_feat in feat2:
-            sim = float(
-                np.dot(feat1, hist_feat)
-                / (np.linalg.norm(feat1) * np.linalg.norm(hist_feat))
-            )
-            similarities.append(sim)
+        # Convert to tensor for faster computation
+        feat1_tensor = torch.from_numpy(feat1).to(self.device)
+        feat2_tensor = torch.from_numpy(np.stack(feat2)).to(self.device)
 
-        return max(similarities)
+        # Compute similarities in one go
+        similarities = torch.nn.functional.cosine_similarity(
+            feat1_tensor.unsqueeze(0), feat2_tensor
+        )
 
-    def _extract_face(self, person_crop: np.ndarray) -> Optional[np.ndarray]:
-        """Extract face from person crop using MediaPipe"""
+        return float(similarities.max().cpu())
+
+    async def process_faces(
+        self,
+        person: PersonFeature,
+        camera_id: str,
+        person_crop,
+    ):
+        """Process faces in parallel"""
         try:
-            if (
-                person_crop is None
-                or person_crop.shape[0] < 32
-                or person_crop.shape[1] < 32
-            ):
-                return None
-
-            with mp.solutions.face_detection.FaceDetection(
-                model_selection=1,
-                min_detection_confidence=0.5,
-            ) as face_detector:
-                results = face_detector.process(
-                    cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB)
-                )
-
-                if results.detections:
-                    detection = results.detections[0]
-                    bbox = detection.location_data.relative_bounding_box
-
-                    h, w = person_crop.shape[:2]
-                    x = max(0, int(bbox.xmin * w))
-                    y = max(0, int(bbox.ymin * h))
-                    width = min(w - x, int(bbox.width * w))
-                    height = min(h - y, int(bbox.height * h))
-
-                    face_crop = person_crop[y : y + height, x : x + width]
-                    if face_crop.size == 0:
-                        return None
-
-                    return cv2.resize(face_crop, (112, 112))
-
-            return None
+            logger.info("Uploading face for recognition")
+            await self.handle_face_upload(person, camera_id, person_crop)
         except Exception as e:
-            logger.error(f"Error extracting face: {e}")
-            return None
+            logger.error(f"Error processing face: {e}")
 
     async def handle_face_upload(
         self, person: PersonFeature, camera_id: str, face_crop: np.ndarray
@@ -236,14 +279,24 @@ class Reid:
     def update(
         self, camera_id: str, person_crops: List[Tuple[int, np.ndarray]]
     ) -> Dict[int, str]:
-        """Update ReID system with new detections"""
+        """Update ReID system with batch processing"""
         current_time = datetime.now()
         track_to_global = {}
 
         with self.processing_lock:
-            for track_id, crop in person_crops:
-                # Extract features
-                features = self._extract_features(crop)
+            # Extract features in batch
+            crops = [crop for _, crop in person_crops]
+            features = self._extract_features_batch(crops)
+
+            # Process each detection
+            for (track_id, person_crop), feat in zip(person_crops, features):
+                # Try to get from cache first
+                cached_id = self.feature_cache.get(track_id)
+                if cached_id and cached_id in self.person_features:
+                    person = self.person_features[cached_id]
+                    if current_time - person.last_seen <= self.max_feature_age:
+                        track_to_global[track_id] = cached_id
+                        continue
 
                 # Find best match
                 best_match = None
@@ -254,7 +307,7 @@ class Reid:
                         continue
 
                     similarity = self._compute_similarity(
-                        features, person.appearance_history
+                        feat, person.appearance_history
                     )
                     if similarity > best_score and similarity > self.reid_threshold:
                         best_score = similarity
@@ -263,30 +316,32 @@ class Reid:
                 if best_match:
                     # Update existing identity
                     person = self.person_features[best_match]
-                    person.appearance_history.append(features)
+                    person.appearance_history.append(feat)
                     if len(person.appearance_history) > self.feature_history_size:
                         person.appearance_history.pop(0)
                     person.last_seen = current_time
                     person.confidence = min(1.0, person.confidence + 0.1)
                     track_to_global[track_id] = best_match
+                    self.feature_cache.put(track_id, best_match)
                 else:
                     # Create new identity
                     new_id = f"person_{len(self.person_features)}"
                     new_person = PersonFeature(
                         global_id=new_id,
-                        reid_features=features,
-                        appearance_history=[features],
+                        reid_features=feat,
+                        appearance_history=[feat],
                         camera_history={camera_id: [current_time]},
                         confidence=0.3,
                     )
                     self.person_features[new_id] = new_person
                     track_to_global[track_id] = new_id
+                    self.feature_cache.put(track_id, new_id)
 
-                    # Handle face detection and upload
-                    face_crop = self._extract_face(crop)
-                    if face_crop is not None:
-                        asyncio.create_task(
-                            self.handle_face_upload(new_person, camera_id, face_crop)
-                        )
+                    asyncio.run(self.process_faces(new_person, camera_id, person_crop))
 
         return track_to_global
+
+    def cleanup(self):
+        """Cleanup resources"""
+        self.feature_cache = None
+        torch.cuda.empty_cache()
