@@ -109,6 +109,7 @@ setup_frontend() {
         bun run build
         echo "✅ Frontend setup complete using bun!"
     elif command -v npm >/dev/null 2>&1; then
+        echo "ℹ️ NPM requires sudo, please enter your password if prompted."
         sudo npm install
         sudo npm run build
         echo "✅ Frontend setup complete using npm!"

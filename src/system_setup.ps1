@@ -10,7 +10,7 @@ function Setup-System {
 
     # Configure NATS after server is running
     if ($Global:nats_url) {
-        Start-Sleep -Seconds 5  # Give the server a moment to fully initialize
+        Start-Sleep -Seconds 1  # Give the server a moment to fully initialize
         Configure-NatsUrl -nats_url $Global:nats_url
     }
 
@@ -162,7 +162,7 @@ function Start-Server {
             }
         }
         # Wait for port to be freed
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 1
     }
 
     # Delete existing database and log files
@@ -170,14 +170,11 @@ function Start-Server {
     Remove-Item -Path "db.db" -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "log.log" -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "server_error.log" -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "server_output.log" -Force -ErrorAction SilentlyContinue
 
     Write-Host "🖥️ Starting edge server..."
     $env:PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:512"
     
-    # Start server with both stdout and stderr redirection
     $server_process = Start-Process -FilePath "python" -ArgumentList "onPremise/server/main.py" -PassThru `
-        -RedirectStandardOutput "server_output.log" -RedirectStandardError "server_error.log"
     $global:server_pid = $server_process.Id
 
     Write-Host "⏳ Checking if the server is already up..."
@@ -211,17 +208,11 @@ function Start-Server {
         }
 
         # Check for successful startup in output log
-        if (Test-Path -Path "server_output.log") {
-            $output_content = Get-Content "server_output.log" -Raw
-            if ($output_content -match "Application startup complete" -and 
-                $output_content -match "Successfully registered mDNS service") {
-                $serverStarted = $true
-                break
-            }
+        if (Test-Path -Path "log.log") {
+            $output_content = Get-Content "log.log" -Raw
             if ($output_content -match "GET /api/alarm HTTP/1.1" -or 
                 $output_content -match "GET /api/cameras HTTP/1.1") {
                 Write-Host "Detected /api/alarm request with 200 OK"
-                # Optionally set $serverStarted or another action
                 $serverStarted = $true
                 break
             }
@@ -240,8 +231,9 @@ function Start-Server {
         # Add periodic status update from the logs
         if ($waited % 10 -eq 0) {
             Write-Host "`nCurrent server status:"
-            if (Test-Path -Path "server_output.log") {
-                Get-Content "server_output.log" -Tail 5 | ForEach-Object { Write-Host "  $_" }
+            if (Test-Path -Path "log.log") {
+                Get-Content "log.log" -Tail 5 | ForEach-Object { Write-Host "  $_" }
+                Write-Host "`nTry to access http://localhost:8000 in your browser"
             }
         }
     }
@@ -257,9 +249,7 @@ function Start-Server {
         cleanup
         exit 1
     }
-
     Write-Host "`n✅ Server started successfully!"
-    Write-Host "Note: NATS warnings are normal when no cloud URL is configured."
 }
 
 function Configure-NatsUrl {
