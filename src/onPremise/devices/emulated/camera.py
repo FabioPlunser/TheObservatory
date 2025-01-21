@@ -27,7 +27,7 @@ class Camera:
         self.discovery = EdgeServerDiscovery()
 
         # Default to a commonly supported configuration
-        self.frame_rate = 15
+        self.frame_rate = 30
         self.frame_width = 640
         self.frame_height = 480
         self.os_type = platform.system().lower()

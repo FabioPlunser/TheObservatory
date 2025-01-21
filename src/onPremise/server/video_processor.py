@@ -55,12 +55,13 @@ class VideoProcessor:
         self.fps_counters = ThreadSafeDict()
 
         self.detection_queues = ThreadSafeDict()
+        self.frame_counter = ThreadSafeDict()
 
         self.frame_skip = 3
-        self.max_queue_size = 5
+        self.max_queue_size = 10
         self.target_fps = 10
         self.frame_interval = 1.0 / self.target_fps
-        self.batch_size = 16
+        self.batch_size = 32
 
         self.thread_pool = ThreadPoolExecutor(max_workers=mp.cpu_count())
 
@@ -125,6 +126,7 @@ class VideoProcessor:
             self.result_queues[camera_id] = queue.Queue(maxsize=self.max_queue_size)
             self.detection_queues[camera_id] = queue.Queue(maxsize=self.max_queue_size)
             self.fps_counters[camera_id] = {"frames": 0, "last_check": time.time()}
+            self.frame_counter[camera_id] = {"frame": 1}
             self.stop_events[camera_id] = threading.Event()
             logger.info(f"Adding camera {camera_id} with RTSP URL: {rtsp_url}")
 
@@ -182,8 +184,6 @@ class VideoProcessor:
         retry_count = 0
         max_retries = 5
         cap = None
-        frame_counter = 0
-        last_frame_time = time.time()
 
         # Pre-allocate frame buffer
         frame_buffer = None
@@ -201,8 +201,8 @@ class VideoProcessor:
                         continue
                     retry_count = 0
 
-                    # Set optimal buffer size
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                # Set optimal buffer size
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
                 ret, frame = cap.read()
                 if not ret:
@@ -213,14 +213,13 @@ class VideoProcessor:
                     continue
 
                 current_time = time.time()
-                if current_time - last_frame_time < self.frame_interval:
-                    time.sleep(0.001)
-                    continue
+                if self.frame_counter[camera_id]["frame"] != 0 and self.frame_skip % self.frame_counter[camera_id]["frame"] != 0:
+                        self.frame_counter[camera_id]["frame"] += 1
+                        continue
+                self.frame_counter[camera_id]["frame"] = 1
 
-                if frame_buffer is None or frame_buffer.shape != frame.shape:
-                    frame_buffer = np.empty_like(frame)
-                np.copyto(frame_buffer, frame)
-
+                if frame.shape[0] > 480 or frame.shape[1] > 640:
+                    frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
                 try:
                     self.detection_queues[camera_id].put_nowait(
                         {
@@ -230,7 +229,6 @@ class VideoProcessor:
                             "timestamp": current_time,
                         }
                     )
-                    last_frame_time = current_time
                 except queue.Full:
                     continue
 
@@ -248,16 +246,12 @@ class VideoProcessor:
         """Optimized detection worker with improved batch processing"""
         batch_frames = []
         batch_metadata = []
-        last_batch_time = time.time()
-        frame_counter = 
+        if len(self.detection_queues) == 0:
+            return
 
         while not self.stop_event.is_set():
             try:
-                current_time = time.time()
 
-                if current_time - last_batch_time < self.frame_interval:
-                    time.sleep(0.001)
-                    continue
 
                 for camera_id in list(self.detection_queues.keys()):
                     try:
@@ -286,6 +280,8 @@ class VideoProcessor:
                                 persist=True,
                                 tracker="bytetrack.yaml",
                                 verbose=False,
+                                classes=[0], 
+                                retina_masks=True,
                             )
 
                         # Process results in parallel using thread pool
@@ -327,7 +323,6 @@ class VideoProcessor:
                     finally:
                         batch_frames.clear()
                         batch_metadata.clear()
-                        last_batch_time = current_time
 
             except Exception as e:
                 logger.error(f"Error in detection worker: {e}")

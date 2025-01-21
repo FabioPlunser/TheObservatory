@@ -29,7 +29,7 @@ class SimulatedCamera:
         self.edge_server_url = None
         self.rtsp_url = None
         self.is_running = False
-        self.frame_rate = 5
+        self.frame_rate = 30
         self.frame_width = 640
         self.frame_height = 480
         self.os_type = platform.system().lower()
