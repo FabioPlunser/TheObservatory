@@ -18,7 +18,6 @@ from logging_config import setup_logger
 from contextlib import nullcontext
 from reid_implementation import Reid
 
-
 setup_logger()
 logger = logging.getLogger("VideoProcessor")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -60,11 +59,15 @@ class VideoProcessor:
 
         self.detection_queues = ThreadSafeDict()
 
-        self.frame_skip = 3
-        self.max_queue_size = 5
+        self.frame_skip = 2
+        self.max_queue_size = 3
         self.target_fps = 15
         self.frame_interval = 1.0 / self.target_fps
-        self.batch_size = 16
+        self.batch_size = 8
+
+        self.thread_pool = ThreadPoolExecutor(max_workers=mp.cpu_count())
+
+        self._color_cache = {}
 
         # GPU Optimizations
         self._setup_gpu()
@@ -80,7 +83,7 @@ class VideoProcessor:
 
         # Start detection threads
         self.detection_threads = []
-        for _ in range(4):
+        for _ in range(num_detection_threads):
             thread = threading.Thread(target=self._detection_worker, daemon=True)
             thread.start()
             self.detection_threads.append(thread)
@@ -95,31 +98,28 @@ class VideoProcessor:
         self.stop_event = threading.Event()
 
     def _setup_gpu(self):
-        """Setup GPU optimizations"""
+        """Enhanced GPU setup with memory optimizations"""
         if torch.cuda.is_available():
-            # Enable TF32 on Ampere
+            # Enable TF32 and other optimizations
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.enabled = True
+            torch.backends.cudnn.deterministic = False
             torch.set_float32_matmul_precision("high")
-
-            # Set per-GPU memory fraction
-            for gpu_id in range(torch.cuda.device_count()):
-                torch.cuda.set_per_process_memory_fraction(0.8, gpu_id)
-
             self.device = torch.device("cuda")
-            self.scaler = torch.amp.GradScaler("cuda")
         else:
             self.device = torch.device("cpu")
-            torch.set_num_threads(4)  # Limit CPU threads
+            torch.set_num_threads(mp.cpu_count())
             self.scaler = None
 
     def _init_model(self):
-        """Initialize model with optimizations"""
+        """Initialize model with additional optimizations"""
         model = YOLO("yolov8n.pt")
-        model.to(self.device)
-        if torch.cuda.is_available():
+        if self.device.type == "cuda":
+            model.to(self.device)
             model.fuse()
+        else:
+            model.to(self.device)
         return model
 
     def add_camera(self, camera_id: str, rtsp_url: str, company_id: str):
@@ -180,18 +180,16 @@ class VideoProcessor:
         except Exception as e:
             print(f"Error during camera {camera_id} cleanup: {e}")
 
-    def _frame_reader_thread(
-        self,
-        camera_id: str,
-        rtsp_url: str,
-        company_id: str,
-    ):
-        """Frame reader thread that sends frames to shared detection queue"""
+    def _frame_reader_thread(self, camera_id: str, rtsp_url: str, company_id: str):
+        """Optimized frame reader with better error handling and performance"""
         retry_count = 0
-        max_retries = 10
+        max_retries = 5
         cap = None
         frame_counter = 0
         last_frame_time = time.time()
+
+        # Pre-allocate frame buffer
+        frame_buffer = None
 
         while not self.stop_events[camera_id].is_set():
             try:
@@ -202,31 +200,39 @@ class VideoProcessor:
                         if retry_count >= max_retries:
                             logger.error(f"Failed to open camera {camera_id}")
                             break
-                        time.sleep(2**retry_count)
+                        time.sleep(min(2**retry_count, 30))  # Cap max sleep time
                         continue
                     retry_count = 0
+
+                    # Set optimal buffer size
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
                 ret, frame = cap.read()
                 if not ret:
                     if cap is not None:
                         cap.release()
                         cap = None
+                    time.sleep(0.1)
                     continue
 
                 current_time = time.time()
                 if current_time - last_frame_time < self.frame_interval:
+                    time.sleep(0.001)
                     continue
 
                 frame_counter += 1
                 if frame_counter % self.frame_skip != 0:
+                    time.sleep(0.001)
                     continue
 
-                if frame.shape[0] > 480 or frame.shape[1] > 640:
-                    frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
+                if frame_buffer is None or frame_buffer.shape != frame.shape:
+                    frame_buffer = np.empty_like(frame)
+                np.copyto(frame_buffer, frame)
+
                 try:
                     self.detection_queues[camera_id].put_nowait(
                         {
-                            "frame": frame,
+                            "frame": frame_buffer,
                             "camera_id": camera_id,
                             "company_id": company_id,
                             "timestamp": current_time,
@@ -235,18 +241,19 @@ class VideoProcessor:
                     last_frame_time = current_time
                 except queue.Full:
                     continue
+
             except Exception as e:
                 logger.error(f"Error in frame reader for camera {camera_id}: {str(e)}")
                 if cap is not None:
                     cap.release()
                     cap = None
-                time.sleep(1)
+                time.sleep(0.1)
 
         if cap is not None:
             cap.release()
 
     def _detection_worker(self):
-        """GPU-specific detection worker with improved batch processing and error handling"""
+        """Optimized detection worker with improved batch processing"""
         batch_frames = []
         batch_metadata = []
         last_batch_time = time.time()
@@ -255,9 +262,8 @@ class VideoProcessor:
             try:
                 current_time = time.time()
 
-                # Check if enough time has passed for next batch
                 if current_time - last_batch_time < self.frame_interval:
-                    time.sleep(0.001)  # Small sleep to prevent CPU spinning
+                    time.sleep(0.001)
                     continue
 
                 # Check all camera queues round-robin
@@ -269,84 +275,75 @@ class VideoProcessor:
                                 batch_frames.append(data["frame"])
                                 batch_metadata.append(data)
                             except queue.Empty:
-                                break  # Move to next camera if queue is empty
-
+                                break
                     except Exception as e:
                         logger.error(f"Error processing camera {camera_id}: {e}")
                         continue
 
-                # Process batch if we have frames
                 if batch_frames:
                     try:
-                        # Use appropriate acceleration based on device
-                        context = (
-                            torch.amp.autocast(self.device.type, enabled=True)
-                            if self.device.type in ["cuda", "cpu"]
+                        # Process batch with automatic mixed precision
+                        with (
+                            torch.amp.autocast("cuda")
+                            if self.device.type == "cuda"
                             else nullcontext()
-                        )
+                        ):
+                            # Convert frames to tensor efficiently
 
-                        with context:
                             results = self.model.track(
                                 source=batch_frames,
                                 conf=0.5,
                                 iou=0.7,
                                 persist=True,
                                 tracker="bytetrack.yaml",
-                                device=self.device,
                                 verbose=False,
                             )
 
-                        # Process results for each frame
+                        # Process results in parallel using thread pool
+                        processing_futures = []
                         for result, metadata in zip(results, batch_metadata):
                             camera_id = metadata["camera_id"]
-                            frame = batch_frames[batch_metadata.index(metadata)]
-
                             if camera_id not in self.result_queues:
                                 continue
 
-                            processed_frame = self._process_detections(
-                                frame, result, camera_id
+                            frame = batch_frames[batch_metadata.index(metadata)]
+                            future = self.thread_pool.submit(
+                                self._process_detections, frame, result, camera_id
                             )
+                            processing_futures.append((future, camera_id))
 
-                            if processed_frame is not None:
-                                try:
-                                    # Encode frame with lower quality for better performance
+                        # Handle processed frames
+                        for future, camera_id in processing_futures:
+                            try:
+                                processed_frame = future.result()
+                                if processed_frame is not None:
                                     _, buffer = cv2.imencode(
                                         ".jpg",
                                         processed_frame,
-                                        [cv2.IMWRITE_JPEG_QUALITY, 80],
+                                        [cv2.IMWRITE_JPEG_QUALITY, 50],
                                     )
 
-                                    self.result_queues[camera_id].put_nowait(
-                                        buffer.tobytes()
-                                    )
-
-                                    # Update FPS counter if it exists
-                                    if camera_id in self.fps_counters:
-                                        self.fps_counters[camera_id]["frames"] += 1
-
-                                except queue.Full:
-                                    continue  # Skip if output queue is full
-                                except Exception as e:
-                                    logger.error(
-                                        f"Error encoding frame for camera {camera_id}: {e}"
-                                    )
-                                    continue
-
-                    except Exception as e:
-                        logger.error(f"Error processing batch: {e}")
+                                    try:
+                                        self.result_queues[camera_id].put_nowait(
+                                            buffer.tobytes()
+                                        )
+                                        if camera_id in self.fps_counters:
+                                            self.fps_counters[camera_id]["frames"] += 1
+                                    except queue.Full:
+                                        continue
+                            except Exception as e:
+                                logger.error(f"Error processing frame result: {e}")
+                                continue
 
                     finally:
-                        # Clear batch data
                         batch_frames.clear()
                         batch_metadata.clear()
                         last_batch_time = current_time
 
             except Exception as e:
                 logger.error(f"Error in detection worker: {e}")
-                time.sleep(0.1)  # Sleep longer on error
+                time.sleep(0.1)
 
-            # Prevent CPU spinning
             time.sleep(0.001)
 
     def _process_detections(self, frame, result, camera_id):
