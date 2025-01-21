@@ -249,7 +249,6 @@ class VideoProcessor:
         batch_frames = []
         batch_metadata = []
         last_batch_time = time.time()
-        frame_counter = 
 
         while not self.stop_event.is_set():
             try:
@@ -279,7 +278,7 @@ class VideoProcessor:
                             if self.device.type == "cuda"
                             else nullcontext()
                         ):
-                            esults = self.model.track(
+                            results = self.model.track(
                                 source=batch_frames,
                                 conf=0.5,
                                 iou=0.7,
@@ -288,7 +287,6 @@ class VideoProcessor:
                                 verbose=False,
                             )
 
-                        # Process results in parallel using thread pool
                         processing_futures = []
                         for result, metadata in zip(results, batch_metadata):
                             camera_id = metadata["camera_id"]
@@ -345,26 +343,28 @@ class VideoProcessor:
             if not hasattr(result.boxes, "cls") or not hasattr(result.boxes, "id"):
                 return frame
 
-            # Extract classes and apply mask
             boxes_cls = (
                 result.boxes.cls.cpu().numpy() if result.boxes.cls.numel() > 0 else []
             )
             if len(boxes_cls) == 0:
-                return
+                return frame  
+            person_mask = boxes_cls == 0
+            if not np.any(person_mask):  
+                return frame
 
             person_mask = boxes_cls == 0
-            if not np.any(person_mask):  # Ensure person_mask is not empty
-                return
+            if not np.any(person_mask): 
+                return frame
 
             # Filter boxes and IDs
             boxes = result.boxes[person_mask]
             if not hasattr(boxes, "id") or boxes.id.numel() == 0:
-                return
+                return 
 
             track_ids = boxes.id.cpu().numpy().astype(int)
             boxes_xyxy = boxes.xyxy.cpu().numpy()
             if len(track_ids) == 0 or len(boxes_xyxy) == 0:
-                return
+                return frame
 
             # Process person detections
             person_crops = []
@@ -388,7 +388,7 @@ class VideoProcessor:
                 return frame
 
             # Update Reid with detections
-            global_ids = self.reid_manager.update(camera_id, person_crops, positions)
+            global_ids = self.reid_manager.update(camera_id, person_crops)
             draw_frame = frame.copy()
 
             for box, track_id in zip(boxes_xyxy, track_ids):
