@@ -37,10 +37,11 @@ class PersonFeature:
     track_id_history: List[int] = field(default_factory=list)
     face_id: Optional[str] = None
     inactive_time: timedelta = field(default_factory=lambda: timedelta(seconds=0))
-
+    recognition_status: str = "pending" 
 
 class LRUCache:
     """Thread-safe LRU Cache implementation"""
+
     def __init__(self, maxsize: int = 128):
         self.maxsize = maxsize
         self.cache = OrderedDict()
@@ -84,16 +85,16 @@ class Reid:
 
     def __init__(
         self,
-        company_id: str = None,  # Add company_id parameter
-        camera_id: str = None,   # Add camera_id parameter
+        company_id: str = None,
+        camera_id: str = None,
         device: torch.device = None,
-        max_feature_age: int = 7200,  # 2 hours
+        max_feature_age: int = 7200,
         feature_history_size: int = 20,
-        reid_threshold: float = 0.5,
+        reid_threshold: float = 0.75,
         spatial_weight: float = 0.3,
         temporal_weight: float = 0.2,
-        appearance_weight: float = 0.4,
-        movement_pattern_weight: float = 0.1,
+        appearance_weight: float = 0.5,
+        movement_pattern_weight: float = 0.0,
         batch_size: int = 32,
     ):
         self.company_id = company_id
@@ -108,7 +109,9 @@ class Reid:
         self.track_id_to_global: Dict[int, str] = {}
 
         # Improved configuration - Fix timedelta initialization
-        self.max_feature_age = timedelta(seconds=int(max_feature_age))  # Ensure int conversion
+        self.max_feature_age = timedelta(
+            seconds=int(max_feature_age)
+        )  # Ensure int conversion
         self.feature_history_size = feature_history_size
         self.reid_threshold = reid_threshold
         self.weights = {
@@ -147,9 +150,13 @@ class Reid:
         self.min_detection_size = (32, 32)
         self.target_size = (224, 224)  # Reduced size for ReID
         self.batch_process_timeout = 0.1
-        
+
         # Add feature caching
         self.feature_cache = LRUCache(maxsize=self.feature_cache_size)
+
+        self.max_spatial_distance = 100
+        self.min_reuse_confidence = 0.6
+        self.active_ids_per_frame = set()
 
     def _init_device(self) -> torch.device:
         if torch.cuda.is_available():
@@ -178,20 +185,22 @@ class Reid:
             all_features = []
 
             for i in range(0, len(frames), sub_batch_size):
-                sub_batch = frames[i:i + sub_batch_size]
+                sub_batch = frames[i : i + sub_batch_size]
 
                 # Parallel preprocessing
                 with ThreadPoolExecutor(max_workers=2) as executor:
-                    processed_frames = list(executor.map(self._preprocess_frame, sub_batch))
+                    processed_frames = list(
+                        executor.map(self._preprocess_frame, sub_batch)
+                    )
 
                 # Stack and process sub-batch
                 batch = torch.stack(processed_frames).to(self.device)
 
                 # Ensure the input tensor is of the same type as the model weights
-                if self.device.type == 'cuda':
+                if self.device.type == "cuda":
                     batch = batch.half()  # Convert to half precision if using CUDA
 
-                with torch.inference_mode(), torch.cuda.amp.autocast(enabled=True):
+                with torch.inference_mode(), torch.amp.autocast("cuda", enabled=True):
                     features = self.reid_model(batch)
                     features = torch.nn.functional.normalize(features, dim=1)
                     all_features.extend(features.cpu().numpy())
@@ -209,7 +218,9 @@ class Reid:
         # Convert to RGB and normalize
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = frame.astype(np.float32) / 255.0
-        frame = (frame - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
+        frame = (frame - np.array([0.485, 0.456, 0.406])) / np.array(
+            [0.229, 0.224, 0.225]
+        )
         # Convert to tensor
         frame = torch.from_numpy(frame).permute(2, 0, 1)
         return frame
@@ -235,25 +246,32 @@ class Reid:
     def _compute_appearance_similarity(
         self, query_features: np.ndarray, gallery_features: List[np.ndarray]
     ) -> float:
-        """Compute appearance similarity with temporal weighting"""
+        """Compute appearance similarity with improved matching"""
         if not gallery_features:
             return 0.0
 
+        # Compute similarities with each historical feature
         similarities = []
-        weights = np.linspace(
-            0.5, 1.0, len(gallery_features)
-        )  # More weight to recent features
+        weights = np.linspace(0.5, 1.0, len(gallery_features))
 
         for feat, weight in zip(gallery_features, weights):
+            # Use cosine similarity
             sim = (
                 1
                 - cdist(
                     query_features.reshape(1, -1), feat.reshape(1, -1), metric="cosine"
                 )[0][0]
             )
+
+            # Apply non-linear transformation to make matching more strict
+            sim = np.power(sim, 1.5)  # This makes high similarities more important
             similarities.append(sim * weight)
 
-        return np.mean(similarities)
+        # Use both mean and max similarity for better discrimination
+        mean_sim = np.mean(similarities)
+        max_sim = np.max(similarities)
+
+        return 0.7 * max_sim + 0.3 * mean_sim  # Weighted combination
 
     def _analyze_movement_patterns(
         self, pattern: List[Tuple[datetime, Tuple[float, float]]]
@@ -353,7 +371,10 @@ class Reid:
         self, track_id: int, candidate_id: str
     ) -> float:
         """Enhanced movement pattern comparison"""
-        if track_id not in self.velocity_history or candidate_id not in self.velocity_history:
+        if (
+            track_id not in self.velocity_history
+            or candidate_id not in self.velocity_history
+        ):
             return 0.0
 
         current_velocities = self.velocity_history[track_id][-10:]
@@ -380,11 +401,9 @@ class Reid:
 
         for i in range(1, n + 1):
             for j in range(1, m + 1):
-                cost = np.linalg.norm(pattern1[i-1] - pattern2[j-1])
+                cost = np.linalg.norm(pattern1[i - 1] - pattern2[j - 1])
                 dtw_matrix[i, j] = cost + min(
-                    dtw_matrix[i-1, j],
-                    dtw_matrix[i, j-1],
-                    dtw_matrix[i-1, j-1]
+                    dtw_matrix[i - 1, j], dtw_matrix[i, j - 1], dtw_matrix[i - 1, j - 1]
                 )
 
         return dtw_matrix[n, m]
@@ -400,13 +419,10 @@ class Reid:
         if len(self.position_history[track_id]) >= 2:
             pos1, t1 = self.position_history[track_id][-2]
             pos2, t2 = self.position_history[track_id][-1]
-            
+
             dt = (t2 - t1).total_seconds()
             if dt > 0:
-                velocity = (
-                    (pos2[0] - pos1[0]) / dt,
-                    (pos2[1] - pos1[1]) / dt
-                )
+                velocity = ((pos2[0] - pos1[0]) / dt, (pos2[1] - pos1[1]) / dt)
                 self.velocity_history[track_id].append(velocity)
                 if len(self.velocity_history[track_id]) > self.max_history_size:
                     self.velocity_history[track_id].pop(0)
@@ -428,7 +444,9 @@ class Reid:
                     self._update_movement_patterns(track_id, pos, current_time)
 
             # Process detections in batch for efficiency
-            batch_features = self._extract_features_batch([crop for _, crop in person_crops])
+            batch_features = self._extract_features_batch(
+                [crop for _, crop in person_crops]
+            )
 
             for (track_id, _), features in zip(person_crops, batch_features):
                 global_id = self._match_or_create_identity(
@@ -482,7 +500,9 @@ class Reid:
         """Upload face image to cloud storage"""
         try:
             # Convert and compress face image
-            _, img_encoded = cv2.imencode('.jpg', face_crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            _, img_encoded = cv2.imencode(
+                ".jpg", face_crop, [cv2.IMWRITE_JPEG_QUALITY, 85]
+            )
             img_bytes = img_encoded.tobytes()
 
             # Get cloud URL from database
@@ -496,7 +516,7 @@ class Reid:
                 {
                     "company_id": self.company_id,
                     "face_id": global_id,
-                }
+                },
             )
 
             if not response or not response.get("success"):
@@ -512,7 +532,9 @@ class Reid:
                     timeout=30,
                 ) as resp:
                     if resp.status != 200:
-                        logger.error(f"Failed to upload face image: {await resp.text()}")
+                        logger.error(
+                            f"Failed to upload face image: {await resp.text()}"
+                        )
                         return False
 
             # Notify cloud about new face
@@ -523,7 +545,7 @@ class Reid:
                     "camera_id": self.camera_id,
                     "person_id": global_id,
                     "timestamp": datetime.now().isoformat(),
-                }
+                },
             )
 
             logger.info(f"Successfully uploaded face for person {global_id}")
@@ -541,14 +563,13 @@ class Reid:
         positions: Optional[Dict[int, Tuple[float, float]]],
         current_time: datetime,
     ) -> Optional[str]:
-        """Handle new detection with improved matching logic"""
+        """Handle new detection with improved feature handling"""
         features = self._extract_features(crop)
         best_match = None
         best_score = 0
 
         # Check all existing identities including recently inactive ones
         for global_id, person in self.person_features.items():
-            # Skip if the track is too old
             if current_time - person.last_seen > self.max_feature_age:
                 continue
 
@@ -578,26 +599,24 @@ class Reid:
                 + self.weights["movement"] * movement_sim
             )
 
-            # Consider reactivating recently inactive tracks with high similarity
             if (
                 person.inactive_time > timedelta(0)
                 and total_sim > self.reactivation_threshold
             ):
-                total_sim *= 1.2  # Boost score for potential reactivation
+                total_sim *= 1.2
 
             if total_sim > best_score and total_sim > self.reid_threshold:
                 best_score = total_sim
                 best_match = global_id
 
         if best_match:
-            # Update existing identity
             self._update_existing_track(
                 best_match, track_id, crop, camera_id, positions, current_time
             )
             self.camera_to_global[(camera_id, track_id)] = best_match
             return best_match
         else:
-            # Create new identity
+            # Create new identity - pass the actual image crop, not features
             new_id = f"person_{len(self.person_features)}"
             self.person_features[new_id] = PersonFeature(
                 global_id=new_id,
@@ -609,8 +628,9 @@ class Reid:
                 ),
                 camera_history={camera_id: [current_time]},
                 track_id_history=[track_id],
-                confidence=0.3,  # Initial confidence
+                confidence=0.3,
             )
+
             self.camera_to_global[(camera_id, track_id)] = new_id
             self.movement_patterns[new_id] = []
             if track_id in positions:
@@ -618,61 +638,83 @@ class Reid:
                     (current_time, positions[track_id])
                 )
 
-            # Extract face from crop and upload to cloud
+            # Pass the actual image crop for face extraction
             try:
-                face_crop = self._extract_face(crop)
+                face_crop = self._extract_face(crop)  # Pass the image, not features
                 if face_crop is not None:
                     asyncio.create_task(self._upload_face_to_cloud(face_crop, new_id))
             except Exception as e:
                 logger.error(f"Error handling face upload for new person: {e}")
 
-            return new_id
-
     def _extract_face(self, person_crop: np.ndarray) -> Optional[np.ndarray]:
-        """Extract face from person crop using MediaPipe"""
+        """Extract face from person crop using MediaPipe with improved format handling"""
         try:
-            # Ensure input image is uint8
+            # Ensure input image is properly formatted
+            if person_crop is None or not isinstance(person_crop, np.ndarray):
+                logger.warning("Invalid input for face detection - not a numpy array")
+                return None
+
+            if len(person_crop.shape) != 3 or person_crop.shape[2] != 3:
+                logger.warning(
+                    f"Invalid image format for face detection - shape: {person_crop.shape}"
+                )
+                return None
+
+            # Ensure input image is uint8 with proper scaling
             if person_crop.dtype != np.uint8:
                 if np.issubdtype(person_crop.dtype, np.floating):
-                    person_crop = (person_crop * 255).clip(0, 255).astype(np.uint8)
+                    if person_crop.max() <= 1.0:  # Assuming [0,1] range
+                        person_crop = (person_crop * 255).clip(0, 255).astype(np.uint8)
+                    else:  # Assuming actual pixel values
+                        person_crop = person_crop.clip(0, 255).astype(np.uint8)
                 else:
                     person_crop = person_crop.astype(np.uint8)
 
+            # Check minimum size requirement
+            if person_crop.shape[0] < 32 or person_crop.shape[1] < 32:
+                logger.debug("Person crop too small for face detection")
+                return None
+
+            # Create face detector with explicit model selection
             with mp.solutions.face_detection.FaceDetection(
-                model_selection=1, min_detection_confidence=0.5
+                model_selection=1,  # Use the full-range model
+                min_detection_confidence=0.5,
             ) as face_detector:
-                # Ensure RGB conversion is safe
-                if len(person_crop.shape) == 3:
-                    rgb_crop = cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB)
-                else:
-                    logger.warning("Invalid image format for face detection")
-                    return None
+                # Convert to RGB if necessary (MediaPipe expects RGB)
+                rgb_crop = cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB)
 
-                # Check minimum size
-                if rgb_crop.shape[0] < 32 or rgb_crop.shape[1] < 32:
-                    logger.debug("Person crop too small for face detection")
-                    return None
-
+                # Process the image
                 results = face_detector.process(rgb_crop)
 
                 if results.detections:
-                    detection = results.detections[0]
+                    detection = results.detections[0]  # Get the first face detected
                     bbox = detection.location_data.relative_bounding_box
 
+                    # Convert relative coordinates to absolute
                     h, w = rgb_crop.shape[:2]
                     x = max(0, int(bbox.xmin * w))
                     y = max(0, int(bbox.ymin * h))
                     width = min(w - x, int(bbox.width * w))
                     height = min(h - y, int(bbox.height * h))
 
+                    # Validate dimensions
                     if width <= 0 or height <= 0:
+                        logger.warning("Invalid face crop dimensions")
                         return None
 
-                    face_crop = person_crop[y:y+height, x:x+width]
-                    if face_crop.size > 0:
-                        face_crop = cv2.resize(face_crop, (112, 112))
-                        return face_crop.astype(np.uint8)
+                    # Extract and process face region
+                    face_crop = person_crop[y : y + height, x : x + width]
 
+                    # Final validation
+                    if face_crop.size == 0:
+                        logger.warning("Empty face crop")
+                        return None
+
+                    # Resize to standard size
+                    face_crop = cv2.resize(face_crop, (112, 112))
+                    return face_crop
+
+            logger.debug("No face detected in person crop")
             return None
 
         except Exception as e:
@@ -727,16 +769,16 @@ class Reid:
 
     @lru_cache(maxsize=128)
     def _compute_spatial_similarity(
-        self, current_pos: Optional[Tuple[float, float]], 
-        last_pos: Optional[Tuple[float, float]]
+        self,
+        current_pos: Optional[Tuple[float, float]],
+        last_pos: Optional[Tuple[float, float]],
     ) -> float:
         """Cached spatial similarity computation"""
         if current_pos is None or last_pos is None:
             return 0.0
-        
+
         distance = np.sqrt(
-            (current_pos[0] - last_pos[0]) ** 2 + 
-            (current_pos[1] - last_pos[1]) ** 2
+            (current_pos[0] - last_pos[0]) ** 2 + (current_pos[1] - last_pos[1]) ** 2
         )
         return 1.0 / (1.0 + distance)
 
@@ -746,12 +788,15 @@ class Reid:
         """Compute temporal similarity between timestamps"""
         if last_time == 0:
             return 0.0
-        
+
         time_diff = abs(current_time - last_time)
         return np.exp(-time_diff / 3600.0)  # Decay over 1 hour
 
     def _is_stopping_point(
-        self, pos1: Tuple[float, float], pos2: Tuple[float, float], threshold: float = 0.1
+        self,
+        pos1: Tuple[float, float],
+        pos2: Tuple[float, float],
+        threshold: float = 0.1,
     ) -> bool:
         """Determine if two positions indicate a stopping point"""
         distance = np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
