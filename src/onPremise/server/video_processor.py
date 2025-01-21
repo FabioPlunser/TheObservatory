@@ -56,11 +56,11 @@ class VideoProcessor:
 
         self.detection_queues = ThreadSafeDict()
 
-        self.frame_skip = 2
-        self.max_queue_size = 3
-        self.target_fps = 15
+        self.frame_skip = 3
+        self.max_queue_size = 5
+        self.target_fps = 10
         self.frame_interval = 1.0 / self.target_fps
-        self.batch_size = 8
+        self.batch_size = 16
 
         self.thread_pool = ThreadPoolExecutor(max_workers=mp.cpu_count())
 
@@ -347,19 +347,16 @@ class VideoProcessor:
                 result.boxes.cls.cpu().numpy() if result.boxes.cls.numel() > 0 else []
             )
             if len(boxes_cls) == 0:
-                return frame  
-            person_mask = boxes_cls == 0
-            if not np.any(person_mask):  
                 return frame
 
             person_mask = boxes_cls == 0
-            if not np.any(person_mask): 
+            if not np.any(person_mask):  # Ensure person_mask is not empty
                 return frame
 
             # Filter boxes and IDs
             boxes = result.boxes[person_mask]
             if not hasattr(boxes, "id") or boxes.id.numel() == 0:
-                return 
+                return frame
 
             track_ids = boxes.id.cpu().numpy().astype(int)
             boxes_xyxy = boxes.xyxy.cpu().numpy()

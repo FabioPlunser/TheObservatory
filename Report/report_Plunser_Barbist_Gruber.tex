@@ -230,7 +230,7 @@ Our evaluation focuses on three key aspects:
 \subsection{Measurements}
 \begin{itemize}
 	\item 24 Images and 5 parallel:
-	\begin{table}[h]
+	\begin{table}[ht]
 		\begin{tabulary}{\textwidth}{|C|C|C|C|C|}
 			\hline
 			\textbf{Name} &
@@ -247,7 +247,7 @@ Our evaluation focuses on three key aspects:
 	\end{table}
 	
 	\item 	 24 Images and 24 parallel:
-	\begin{table}[h]
+	\begin{table}[ht]
 		\begin{tabulary}{\textwidth}{|C|C|C|C|C|}
 			\hline
 			\textbf{Name} &
@@ -265,7 +265,7 @@ Our evaluation focuses on three key aspects:
 	
 	
 	\item 	 100 Images and 100 parallel:
-	\begin{table}[h]
+	\begin{table}[ht]
 		\begin{tabulary}{\textwidth}{|C|C|C|C|C|}
 			\hline
 			\textbf{Name} &
@@ -281,7 +281,7 @@ Our evaluation focuses on three key aspects:
 		\end{tabulary} 
 	\end{table}
 	\item 	 200 Images and 200 parallel:
-	\begin{table}[h]
+	\begin{table}[ht]
 		\begin{tabulary}{\textwidth}{|C|C|C|C|C|}
 			\hline
 			\textbf{Name} &
@@ -302,7 +302,7 @@ Our evaluation focuses on three key aspects:
 
 \subsubsection{Total Processing Time Analysis}
 The total processing time analysis reveals comprehensive system performance characteristics across different parallel processing configurations. The minimum processing times show a relatively modest increase from 0.675 seconds with 5 parallel processes to 1.487 seconds with 200 parallel processes, demonstrating good baseline scalability. The maximum processing times exhibit more dramatic scaling effects, peaking at approximately 8.8 seconds for the 100-parallel configuration and showing slightly better performance at 8.2 seconds for the 200-parallel configuration, which suggests potential optimization in resource utilization at higher scales. The mean processing times demonstrate a significant jump when moving from 24 parallel processes (1.224 seconds) to 100 parallel processes (5.962 seconds), indicating a potential performance threshold where resource contention becomes a limiting factor. The median values closely follow the mean times but show some deviation in the 100-parallel configuration, suggesting occasional performance outliers that affect the average. The overall trend indicates that while the system can handle increased parallelism, there are clear performance trade-offs beyond certain thresholds, particularly when processing more than 24 concurrent requests.
-\begin{figure}[h]	
+\begin{figure}[ht]	
 	\centering
 	\includegraphics[width=6cm,height=6cm,keepaspectratio]{images/measurements_cloud/total_processing_time.png}
 	\caption{Total processing time.}
@@ -310,7 +310,7 @@ The total processing time analysis reveals comprehensive system performance char
 \end{figure}
 \subsubsection{Image Upload Time Analysis}
 The image upload time graph demonstrates a clear correlation between parallel processing load and upload duration, with the 100-parallel and 200-parallel configurations showing significantly higher maximum upload times of approximately 7.7 and 6.4 seconds respectively. The minimum upload times remain relatively consistent across all configurations, ranging from 0.5 to 0.7 seconds, suggesting a baseline network overhead regardless of parallel load. The mean upload times show a notable increase from around 0.7 seconds with 24 images to approximately 4.5 seconds with larger batches, indicating potential resource contention or network bandwidth limitations at higher scales. Interestingly, the 200-parallel configuration shows slightly better performance than the 100-parallel configuration in terms of median upload time, suggesting possible optimization in the connection pooling or resource allocation at larger scales. The relatively small difference between mean and median values in the 24-image configurations indicates a more predictable performance at lower parallel loads, while the larger spreads in the 100 and 200 image configurations suggest more variable performance under heavy load.
-\begin{figure}[h]	
+\begin{figure}[ht]	
 	\centering
 	\includegraphics[width=6cm,height=6cm,keepaspectratio]{images/measurements_cloud/image_upload_time.png}
 	\caption{Image upload time.}
@@ -319,12 +319,20 @@ The image upload time graph demonstrates a clear correlation between parallel pr
 
 \subsubsection{Presigned URL Request Time Analysis}
 The presigned URL request time analysis reveals a clear scaling pattern, with request times increasing proportionally with the number of parallel operations. The minimum request times show a gradual increase from 0.12 seconds with 5 parallel requests to 0.82 seconds with 200 parallel requests, indicating growing overhead in the AWS authentication and URL generation system. The maximum request times demonstrate more pronounced scaling effects, reaching nearly 3 seconds for the 200-parallel configuration, which suggests potential bottlenecks in the URL generation service under high concurrent loads. The mean request times maintain a relatively linear relationship with the number of parallel requests, increasing from 0.143 seconds to 1.354 seconds as parallelism scales up. The median values closely track the means in most configurations, indicating a fairly normal distribution of request times without significant outliers. Most notably, the spread between minimum and maximum times widens considerably at higher parallelism, suggesting decreased predictability in request latency under heavy load.
-\begin{figure}[h]	
+\begin{figure}[ht]	
 	\centering
 	\includegraphics[width=6cm,height=6cm,keepaspectratio]{images/measurements_cloud/presigned_url_request_time.png}
 	\caption{Presigned URL request time.}
 	\label{presigned-url-request-time}
 \end{figure}
+
+\section{Shortcomings}
+
+\begin{itemize}
+      \item \textbf{Performance:} The system's performance is limited by the processing power of the edge device, resulting in reduced frame rates for multiple video streams.
+      \item \textbf{Scalability:} The system's scalability is limited by the edge device's processing capabilities, with performance degradation at higher parallel processing loads.
+      \item \textbf{Reliability:} ...
+\end{itemize}
 
 
 \end{document}
