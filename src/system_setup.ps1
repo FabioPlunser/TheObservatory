@@ -174,8 +174,7 @@ function Start-Server {
     Write-Host "🖥️ Starting edge server..."
     $env:PYTORCH_CUDA_ALLOC_CONF = "max_split_size_mb:512"
     
-    $server_process = Start-Process -FilePath "python" -ArgumentList "onPremise/server/main.py" -PassThru `
-    $global:server_pid = $server_process.Id
+    $server_process = Start-Process -FilePath "python" -ArgumentList "onPremise/server/main.py" -PassThru
 
     Write-Host "⏳ Checking if the server is already up..."
     try {
@@ -211,7 +210,8 @@ function Start-Server {
         if (Test-Path -Path "log.log") {
             $output_content = Get-Content "log.log" -Raw
             if ($output_content -match "GET /api/alarm HTTP/1.1" -or 
-                $output_content -match "GET /api/cameras HTTP/1.1") {
+                $output_content -match "GET /api/cameras HTTP/1.1" -or
+                $output_content -match "No cloud URL configured") {
                 Write-Host "Detected /api/alarm request with 200 OK"
                 $serverStarted = $true
                 break

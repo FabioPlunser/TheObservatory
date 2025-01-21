@@ -351,8 +351,8 @@ class EdgeServer:
             company_id = data.get("company_id")
 
             # Log detailed information about the alert
-            logger.info(f"Alert details: camera_id={camera_id}, unknown_face_url={unknown_face_url}, track_id={track_id}, face_id={face_id}, company_id={company_id}")
-            evaluation_logger.info(f"Alert details: camera_id={camera_id}, unknown_face_url={unknown_face_url}, track_id={track_id}, face_id={face_id}, company_id={company_id}")
+            logger.debug(f"Alert details: camera_id={camera_id}, unknown_face_url={unknown_face_url}, track_id={track_id}, face_id={face_id}, company_id={company_id}")
+            evaluation_logger.info(f"Alert details: camera_id={camera_id}, track_id={track_id}, face_id={face_id}, company_id={company_id}")
 
             # Verify this alert is for one of our cameras
             if camera_id not in self.cameras:

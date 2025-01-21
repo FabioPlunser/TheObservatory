@@ -6,18 +6,13 @@ import time
 import queue
 import os
 import threading
-import multiprocessing as mp
 import colorsys
-import psutil
 
-from typing import Dict, List, Optional, Tuple
+from typing import  Optional, Tuple
 from ultralytics import YOLO
-from concurrent.futures import ThreadPoolExecutor
-from collections import defaultdict, deque
 from logging_config import setup_logger
 from contextlib import nullcontext
 from reid_implementation import Reid
-
 
 setup_logger()
 logger = logging.getLogger("VideoProcessor")
@@ -50,9 +45,8 @@ class VideoProcessor:
     Shared video processor that handles multiple cameras efficiently
     """
 
-    def __init__(self, num_detection_threads: int = 4):
+    def __init__(self):
         # Initialize collections
-        self.frame_queues = ThreadSafeDict()
         self.result_queues = ThreadSafeDict()
         self.stop_events = ThreadSafeDict()
         self.camera_threads = ThreadSafeDict()
@@ -62,9 +56,9 @@ class VideoProcessor:
 
         self.frame_skip = 3
         self.max_queue_size = 5
-        self.target_fps = 15
+        self.target_fps = 5
         self.frame_interval = 1.0 / self.target_fps
-        self.batch_size = 16
+        self.batch_size = 8
 
         # GPU Optimizations
         self._setup_gpu()
@@ -101,7 +95,7 @@ class VideoProcessor:
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.enabled = True
-            torch.set_float32_matmul_precision("high")
+            torch.set_float32_matmul_precision("medium")
 
             # Set per-GPU memory fraction
             for gpu_id in range(torch.cuda.device_count()):
@@ -296,32 +290,32 @@ class VideoProcessor:
                                 verbose=False,
                             )
 
-                        # Process results for each frame
-                        for result, metadata in zip(results, batch_metadata):
-                            camera_id = metadata["camera_id"]
-                            frame = batch_frames[batch_metadata.index(metadata)]
+                        # Validate results
+                        if not results or len(results) != len(batch_frames):
+                            logger.error("Mismatch between results and batch frames")
+                            batch_frames.clear()
+                            batch_metadata.clear()
+                            continue
 
-                            if camera_id not in self.result_queues:
+                        # Process each frame's results
+                        for result, metadata in zip(results, batch_metadata):
+                            if not hasattr(result, "boxes") or result.boxes is None:
                                 continue
+
+                            frame = metadata["frame"]
+                            camera_id = metadata["camera_id"]
 
                             processed_frame = self._process_detections(
                                 frame, result, camera_id
                             )
-
                             if processed_frame is not None:
                                 try:
-                                    # Encode frame with lower quality for better performance
                                     _, buffer = cv2.imencode(
                                         ".jpg",
                                         processed_frame,
                                         [cv2.IMWRITE_JPEG_QUALITY, 80],
                                     )
-
-                                    self.result_queues[camera_id].put_nowait(
-                                        buffer.tobytes()
-                                    )
-
-                                    # Update FPS counter if it exists
+                                    self.result_queues[camera_id].put_nowait(buffer.tobytes())
                                     if camera_id in self.fps_counters:
                                         self.fps_counters[camera_id]["frames"] += 1
 
@@ -352,23 +346,31 @@ class VideoProcessor:
     def _process_detections(self, frame, result, camera_id):
         """Process detections with improved error handling and type checking"""
         try:
-            # Initial validation
+            # Ensure result.boxes exists and has necessary attributes
+            if not hasattr(result, "boxes") or result.boxes is None:
+                return frame
+
             if not hasattr(result.boxes, "cls") or not hasattr(result.boxes, "id"):
                 return frame
 
-            # Get person detections (class 0 in COCO)
-            boxes_cls = result.boxes.cls.cpu().numpy()
+            # Extract classes and apply mask
+            boxes_cls = result.boxes.cls.cpu().numpy() if result.boxes.cls.numel() > 0 else []
+            if len(boxes_cls) == 0:
+                return
+
             person_mask = boxes_cls == 0
-            if not np.any(person_mask):  # More explicit numpy boolean reduction
-                return frame
+            if not np.any(person_mask):  # Ensure person_mask is not empty
+                return
 
+            # Filter boxes and IDs
             boxes = result.boxes[person_mask]
-            if boxes.id is None:
-                return frame
+            if not hasattr(boxes, "id") or boxes.id.numel() == 0:
+                return
 
-            # Get IDs and boxes for person detections
             track_ids = boxes.id.cpu().numpy().astype(int)
             boxes_xyxy = boxes.xyxy.cpu().numpy()
+            if len(track_ids) == 0 or len(boxes_xyxy) == 0:
+                return
 
             # Process person detections
             person_crops = []
@@ -377,45 +379,22 @@ class VideoProcessor:
             for box, track_id in zip(boxes_xyxy, track_ids):
                 x1, y1, x2, y2 = map(int, box)
 
-                # Validate box coordinates
-                if (
-                    x1 < 0
-                    or y1 < 0
-                    or x2 >= frame.shape[1]
-                    or y2 >= frame.shape[0]
-                    or x2 <= x1
-                    or y2 <= y1
-                ):
+                # Validate bounding box coordinates
+                if x1 < 0 or y1 < 0 or x2 >= frame.shape[1] or y2 >= frame.shape[0]:
                     continue
 
-                try:
-                    # Add padding for better detection
-                    pad = 10
-                    x1_pad = max(0, x1 - pad)
-                    y1_pad = max(0, y1 - pad)
-                    x2_pad = min(frame.shape[1], x2 + pad)
-                    y2_pad = min(frame.shape[0], y2 + pad)
-
-                    crop = frame[y1_pad:y2_pad, x1_pad:x2_pad]
-
-                    # Validate crop size
-                    if crop.size == 0 or crop.shape[0] < 30 or crop.shape[1] < 30:
-                        continue
-
-                    person_crops.append((int(track_id), crop.copy()))
-                    positions[int(track_id)] = ((x1 + x2) / 2, (y1 + y2) / 2)
-
-                except Exception as e:
-                    logger.error(f"Error cropping detection: {e}")
+                crop = frame[y1:y2, x1:x2]
+                if crop.size == 0 or crop.shape[0] < 30 or crop.shape[1] < 30:
                     continue
+
+                person_crops.append((track_id, crop.copy()))
+                positions[track_id] = ((x1 + x2) / 2, (y1 + y2) / 2)
 
             if not person_crops:
                 return frame
 
             # Update Reid with detections
             global_ids = self.reid_manager.update(camera_id, person_crops, positions)
-
-            # Draw results
             draw_frame = frame.copy()
 
             for box, track_id in zip(boxes_xyxy, track_ids):
