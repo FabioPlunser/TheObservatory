@@ -29,7 +29,7 @@ class SimulatedCamera:
         self.edge_server_url = None
         self.rtsp_url = None
         self.is_running = False
-        self.frame_rate = 15
+        self.frame_rate = 5
         self.frame_width = 640
         self.frame_height = 480
         self.os_type = platform.system().lower()
@@ -296,7 +296,7 @@ class SimulatedCamera:
                 *output_args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=open(os.devnull, 'w'),
             )
 
             await self._handle_ffmpeg_process(process, concat_content, stop_event)

@@ -289,10 +289,8 @@ class Database:
         async with self.async_session() as session:
             stmt = select(Camera).where(Camera.detected_unknown_face == True)
             result = await session.execute(stmt)
-            camera = result.scalar_one_or_none()
-            if camera:
-                return camera.__dict__
-            return
+            cameras = result.scalars().all()
+            return [camera.__dict__ for camera in cameras]
 
     async def create_alarm(
         self,

@@ -483,7 +483,13 @@ class Router:
             """Get any triggered alarms and their unknown face URLs"""
             try:
                 alarms = await self.db.get_active_alarms()
+
+                if not alarms:
+                    return {"alarms": None}
+
+                # All alarms are active so we can just return the first one
                 alarm = alarms[0]
+
                 cameras = await self.db.get_cameras_which_detected_unknown_face()
                 if not cameras:
                     return {"alarms": None}

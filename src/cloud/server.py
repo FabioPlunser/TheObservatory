@@ -232,7 +232,7 @@ class Server:
                                 "Name": unknown_face_key,
                             }
                         },
-                        SimilarityThreshold=80.0,
+                        SimilarityThreshold=60.0,
                     )
                     if response["FaceMatches"]:
                         matches.append(

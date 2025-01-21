@@ -27,7 +27,7 @@ class Camera:
         self.discovery = EdgeServerDiscovery()
 
         # Default to a commonly supported configuration
-        self.frame_rate = 30
+        self.frame_rate = 15
         self.frame_width = 640
         self.frame_height = 480
         self.os_type = platform.system().lower()
@@ -171,15 +171,15 @@ class Camera:
                     "-c:v",
                     "h264_nvenc",
                     "-preset",
-                    "p1",  # Use p1 preset instead of ultrafast
+                    "fast",  # Use p1 preset instead of ultrafast
                     "-tune",
                     "ll",  # Low latency tuning
                     "-b:v",
-                    "2M",  # Target bitrate
+                    "1M",  # Target bitrate
                     "-maxrate",
-                    "4M",  # Maximum bitrate
+                    "2M",  # Maximum bitrate
                     "-bufsize",
-                    "8M",  # Buffer size
+                    "4M",  # Buffer size
                     "-g",
                     "30",  # Keyframe interval
                     "-f",
