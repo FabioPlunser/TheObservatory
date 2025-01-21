@@ -38,6 +38,8 @@
   async function getActiveAlarm() {
     let res = await fetch(`${SERVER_URL}/api/alarm`);
     let data = await res.json();
+    console.log("get alarm");
+    console.log(data.alarms);
     alarms = data.alarms;
   }
 

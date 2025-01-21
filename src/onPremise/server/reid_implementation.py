@@ -915,7 +915,6 @@ class Reid:
                         logger.warning(f"Upload attempt {attempt + 1} failed: {str(e)}")
                         await asyncio.sleep(1)
 
-            # Execute recognition
             await nats_client.send_message(
                 Commands.EXECUTE_RECOGNITION.value,
                 {

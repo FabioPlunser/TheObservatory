@@ -22,8 +22,11 @@ logger = logging.getLogger("EdgeServer")
 evaluation_logger = logging.getLogger("Evaluation")
 evaluation_logger.setLevel(logging.INFO)
 evaluation_handler = logging.FileHandler("evaluation.log")
-evaluation_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+evaluation_handler.setFormatter(
+    logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+)
 evaluation_logger.addHandler(evaluation_handler)
+
 
 class EdgeServer:
     def __init__(self, port):
@@ -351,8 +354,12 @@ class EdgeServer:
             company_id = data.get("company_id")
 
             # Log detailed information about the alert
-            logger.debug(f"Alert details: camera_id={camera_id}, unknown_face_url={unknown_face_url}, track_id={track_id}, face_id={face_id}, company_id={company_id}")
-            evaluation_logger.info(f"Alert details: camera_id={camera_id}, track_id={track_id}, face_id={face_id}, company_id={company_id}")
+            logger.info(
+                f"Alert details: camera_id={camera_id}, unknown_face_url={unknown_face_url}, track_id={track_id}, face_id={face_id}, company_id={company_id}"
+            )
+            evaluation_logger.info(
+                f"Alert details: camera_id={camera_id}, unknown_face_url={unknown_face_url}, track_id={track_id}, face_id={face_id}, company_id={company_id}"
+            )
 
             # Verify this alert is for one of our cameras
             if camera_id not in self.cameras:
@@ -361,7 +368,6 @@ class EdgeServer:
                 )
                 return
 
-            # Update that the certain camera has an unknown face
             await self.db.update_camera_unknown_face(camera_id, True, unknown_face_url)
 
             if camera_id in self.cameras:
