@@ -254,7 +254,7 @@ class VideoProcessor:
         while not self.stop_event.is_set():
             try:
                 current_time = time.time()
-                
+
                 # Check if enough time has passed for next batch
                 if current_time - last_batch_time < self.frame_interval:
                     time.sleep(0.001)  # Small sleep to prevent CPU spinning
@@ -284,7 +284,7 @@ class VideoProcessor:
                             if self.device.type in ["cuda", "cpu"]
                             else nullcontext()
                         )
-                        
+
                         with context:
                             results = self.model.track(
                                 source=batch_frames,
@@ -304,8 +304,10 @@ class VideoProcessor:
                             if camera_id not in self.result_queues:
                                 continue
 
-                            processed_frame = self._process_detections(frame, result, camera_id)
-                            
+                            processed_frame = self._process_detections(
+                                frame, result, camera_id
+                            )
+
                             if processed_frame is not None:
                                 try:
                                     # Encode frame with lower quality for better performance
@@ -315,16 +317,20 @@ class VideoProcessor:
                                         [cv2.IMWRITE_JPEG_QUALITY, 80],
                                     )
 
-                                    self.result_queues[camera_id].put_nowait(buffer.tobytes())
-                                    
+                                    self.result_queues[camera_id].put_nowait(
+                                        buffer.tobytes()
+                                    )
+
                                     # Update FPS counter if it exists
                                     if camera_id in self.fps_counters:
                                         self.fps_counters[camera_id]["frames"] += 1
-                                        
+
                                 except queue.Full:
                                     continue  # Skip if output queue is full
                                 except Exception as e:
-                                    logger.error(f"Error encoding frame for camera {camera_id}: {e}")
+                                    logger.error(
+                                        f"Error encoding frame for camera {camera_id}: {e}"
+                                    )
                                     continue
 
                     except Exception as e:

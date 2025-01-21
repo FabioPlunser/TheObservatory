@@ -7,6 +7,7 @@ import logging
 import os
 import mediapipe as mp
 import aiohttp
+import uuid
 from nats_client import NatsClient, Commands
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -19,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import deque, defaultdict, OrderedDict
 from logging_config import setup_logger
+from database import Database
 
 setup_logger()
 logger = logging.getLogger("ReID")
@@ -37,7 +39,8 @@ class PersonFeature:
     track_id_history: List[int] = field(default_factory=list)
     face_id: Optional[str] = None
     inactive_time: timedelta = field(default_factory=lambda: timedelta(seconds=0))
-    recognition_status: str = "pending" 
+    recognition_status: str = "pending"
+
 
 class LRUCache:
     """Thread-safe LRU Cache implementation"""
@@ -85,8 +88,6 @@ class Reid:
 
     def __init__(
         self,
-        company_id: str = None,
-        camera_id: str = None,
         device: torch.device = None,
         max_feature_age: int = 7200,
         feature_history_size: int = 20,
@@ -96,9 +97,8 @@ class Reid:
         appearance_weight: float = 0.5,
         movement_pattern_weight: float = 0.0,
         batch_size: int = 32,
+        max_image_dimension: int = 1920,
     ):
-        self.company_id = company_id
-        self.camera_id = camera_id
         # Use provided device or initialize a new one
         self.device = device if device is not None else self._init_device()
         self.reid_model = self._init_reid_model()
@@ -126,6 +126,10 @@ class Reid:
         self.feature_cache = {}
         self.processing_lock = threading.Lock()
         self.appearance_buffer = deque(maxlen=100)
+
+        self.max_image_dimension = max_image_dimension
+        self.processed_faces = {}
+        self.db = Database()
 
         # Enhanced tracking stability
         self.min_track_confidence = 0.3
@@ -450,7 +454,12 @@ class Reid:
 
             for (track_id, _), features in zip(person_crops, batch_features):
                 global_id = self._match_or_create_identity(
-                    track_id, features, camera_id, positions, current_time
+                    track_id,
+                    features,
+                    camera_id,
+                    positions,
+                    current_time,
+                    person_crops[0][1],
                 )
                 if global_id:
                     track_to_global[track_id] = global_id
@@ -496,65 +505,6 @@ class Reid:
         # Increase confidence with consistent tracking
         person.confidence = min(1.0, person.confidence + 0.1)
 
-    async def _upload_face_to_cloud(self, face_crop: np.ndarray, global_id: str):
-        """Upload face image to cloud storage"""
-        try:
-            # Convert and compress face image
-            _, img_encoded = cv2.imencode(
-                ".jpg", face_crop, [cv2.IMWRITE_JPEG_QUALITY, 85]
-            )
-            img_bytes = img_encoded.tobytes()
-
-            # Get cloud URL from database
-            nats_url = await self.db.get_cloud_url()
-            nats_client = NatsClient(nats_url)
-            await nats_client.connect()
-
-            # Get presigned URL for upload
-            response = await nats_client.send_message_with_reply(
-                Commands.GET_PRESIGNED_UPLOAD_UNKNOWN_FACE_URL.value,
-                {
-                    "company_id": self.company_id,
-                    "face_id": global_id,
-                },
-            )
-
-            if not response or not response.get("success"):
-                logger.error(f"Failed to get presigned URL for face upload: {response}")
-                return False
-
-            # Upload face image
-            async with aiohttp.ClientSession() as session:
-                async with session.put(
-                    response["url"],
-                    data=img_bytes,
-                    headers={"Content-Type": "image/jpeg"},
-                    timeout=30,
-                ) as resp:
-                    if resp.status != 200:
-                        logger.error(
-                            f"Failed to upload face image: {await resp.text()}"
-                        )
-                        return False
-
-            # Notify cloud about new face
-            await nats_client.send_message(
-                Commands.NEW_PERSON_DETECTED.value,
-                {
-                    "company_id": self.company_id,
-                    "camera_id": self.camera_id,
-                    "person_id": global_id,
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-
-            logger.info(f"Successfully uploaded face for person {global_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error uploading face to cloud: {e}")
-            return False
-
     def _handle_new_detection(
         self,
         track_id: int,
@@ -562,6 +512,7 @@ class Reid:
         camera_id: str,
         positions: Optional[Dict[int, Tuple[float, float]]],
         current_time: datetime,
+        person_crop,
     ) -> Optional[str]:
         """Handle new detection with improved feature handling"""
         features = self._extract_features(crop)
@@ -618,7 +569,7 @@ class Reid:
         else:
             # Create new identity - pass the actual image crop, not features
             new_id = f"person_{len(self.person_features)}"
-            self.person_features[new_id] = PersonFeature(
+            new_person = PersonFeature(
                 global_id=new_id,
                 reid_features=features,
                 appearance_history=[features],
@@ -630,7 +581,7 @@ class Reid:
                 track_id_history=[track_id],
                 confidence=0.3,
             )
-
+            self.person_features[new_id] = new_person
             self.camera_to_global[(camera_id, track_id)] = new_id
             self.movement_patterns[new_id] = []
             if track_id in positions:
@@ -638,13 +589,18 @@ class Reid:
                     (current_time, positions[track_id])
                 )
 
-            # Pass the actual image crop for face extraction
+            # Extract face and initiate upload process
             try:
-                face_crop = self._extract_face(crop)  # Pass the image, not features
+                face_crop = self._extract_face(person_crop)
                 if face_crop is not None:
-                    asyncio.create_task(self._upload_face_to_cloud(face_crop, new_id))
+                    # Create task for face upload
+                    asyncio.run(
+                        self.handle_face_upload(new_person, camera_id, face_crop)
+                    )
             except Exception as e:
                 logger.error(f"Error handling face upload for new person: {e}")
+
+            return new_id
 
     def _extract_face(self, person_crop: np.ndarray) -> Optional[np.ndarray]:
         """Extract face from person crop using MediaPipe with improved format handling"""
@@ -751,6 +707,7 @@ class Reid:
         camera_id: str,
         positions: Optional[Dict[int, Tuple[float, float]]],
         current_time: datetime,
+        person_crop,
     ) -> Optional[str]:
         """Match to existing identity or create new one"""
         # Check if we already have a mapping for this track_id
@@ -764,7 +721,7 @@ class Reid:
 
         # Try to match with existing identities
         return self._handle_new_detection(
-            track_id, features, camera_id, positions, current_time
+            track_id, features, camera_id, positions, current_time, person_crop
         )
 
     @lru_cache(maxsize=128)
@@ -801,3 +758,195 @@ class Reid:
         """Determine if two positions indicate a stopping point"""
         distance = np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
         return distance < threshold
+
+    async def validate_and_encode_face_image(
+        self, face_image: np.ndarray
+    ) -> Optional[bytes]:
+        """Validate and encode face image according to AWS Rekognition requirements"""
+        try:
+            if face_image is None:
+                logger.error("Input face image is None")
+                return None
+
+            # Check image dimensions
+            height, width = face_image.shape[:2]
+            if height < 80 or width < 80:
+                logger.error(
+                    f"Image too small: {width}x{height}, minimum 80x80 required"
+                )
+                return None
+
+            # Resize if image is too large
+            if height > self.max_image_dimension or width > self.max_image_dimension:
+                scale = self.max_image_dimension / max(height, width)
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                face_image = cv2.resize(face_image, (new_width, new_height))
+
+            # Encode image with quality check
+            _, img_encoded = cv2.imencode(
+                ".jpg", face_image, [cv2.IMWRITE_JPEG_QUALITY, 85]
+            )
+
+            if img_encoded is None:
+                logger.error("Failed to encode image")
+                return None
+
+            img_bytes = img_encoded.tobytes()
+
+            # Check file size (5MB limit for AWS Rekognition)
+            if len(img_bytes) > 5 * 1024 * 1024:
+                logger.error("Encoded image exceeds 5MB limit")
+                return None
+
+            return img_bytes
+
+        except Exception as e:
+            logger.error(f"Error validating/encoding face image: {e}")
+            return None
+
+    async def upload_face_image(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        img_bytes: bytes,
+        timeout: int = 60,
+    ) -> None:
+        """Upload face image to S3 using presigned URL"""
+        try:
+            logger.info(f"Uploading to URL: {url}")
+
+            async with session.put(
+                url,
+                data=img_bytes,
+                headers={"Content-Type": "*"},
+                skip_auto_headers=["Content-Type"],
+                timeout=30,
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"Upload failed with status {resp.status}")
+                    logger.error(f"Response body: {error_text}")
+                    logger.error(f"Final URL: {str(resp.url)}")
+                    raise Exception(
+                        f"Upload failed with status {resp.status}: {error_text}"
+                    )
+
+                logger.info(
+                    f"Successfully uploaded image. Response status: {resp.status}"
+                )
+
+        except asyncio.TimeoutError:
+            logger.error(f"Upload timed out after {timeout}s")
+            raise
+        except Exception as e:
+            logger.error(f"Upload failed: {str(e)}")
+            raise
+
+    async def handle_face_upload(
+        self, person: PersonFeature, camera_id: str, face_crop: np.ndarray
+    ) -> None:
+        """Handle face upload and recognition for new person"""
+        logger.info(f"Handling face upload for person {person.global_id}")
+        nats_client = None
+
+        try:
+            # Validate and encode image
+            img_bytes = await self.validate_and_encode_face_image(face_crop)
+            if img_bytes is None:
+                logger.error(
+                    f"Failed to validate/encode face image for person {person.global_id}"
+                )
+                person.recognition_status = "pending"
+                return
+
+            # Generate unique face ID if none exists
+            if person.face_id is None:
+                person.face_id = str(uuid.uuid4())
+                logger.info(
+                    f"Generated new face ID {person.face_id} for person {person.global_id}"
+                )
+
+            # Update status to in_progress
+            person.recognition_status = "in_progress"
+
+            # Get NATS connection
+            nats_url = await self.db.get_cloud_url()
+            nats_client = NatsClient(nats_url)
+            await nats_client.connect()
+
+            company_id = await self.db.get_company_id()
+
+            # Get presigned URL
+            response = await nats_client.send_message_with_reply(
+                Commands.GET_PRESIGNED_UPLOAD_UNKNOWN_FACE_URL.value,
+                {
+                    "company_id": company_id,
+                    "face_id": person.face_id,
+                },
+            )
+
+            if not response or not response.get("success"):
+                logger.error(f"Failed to get presigned URL: {response}")
+                person.recognition_status = "pending"
+                return
+
+            presigned_url = response.get("url")
+            if not presigned_url:
+                logger.error("No presigned URL in response")
+                person.recognition_status = "pending"
+                return
+
+            # Upload image
+            async with aiohttp.ClientSession() as session:
+                for attempt in range(3):  # Try up to 3 times
+                    try:
+                        await self.upload_face_image(session, presigned_url, img_bytes)
+                        logger.info(
+                            f"Successfully uploaded image for face_id {person.face_id}"
+                        )
+                        break
+                    except Exception as e:
+                        if attempt == 2:  # Last attempt
+                            logger.error(
+                                f"All upload attempts failed for face_id {person.face_id}"
+                            )
+                            person.recognition_status = "pending"
+                            return
+                        logger.warning(f"Upload attempt {attempt + 1} failed: {str(e)}")
+                        await asyncio.sleep(1)
+
+            # Execute recognition
+            await nats_client.send_message(
+                Commands.EXECUTE_RECOGNITION.value,
+                {
+                    "company_id": company_id,
+                    "camera_id": camera_id,
+                    "face_id": person.face_id,
+                    "global_id": person.global_id,
+                },
+            )
+
+            person.recognition_status = "tracked"
+            self.processed_faces[person.face_id] = datetime.now()
+
+            # Update database
+            try:
+                await self.db.update_person_track(
+                    global_id=person.global_id,
+                    camera_id=camera_id,
+                    face_id=person.face_id,
+                    recognition_status=person.recognition_status,
+                )
+            except Exception as e:
+                logger.error(f"Failed to update database: {str(e)}")
+
+        except Exception as e:
+            logger.error(f"Error in face upload: {str(e)}")
+            person.recognition_status = "pending"
+        finally:
+            if nats_client:
+                try:
+                    await nats_client.close()
+                except Exception as e:
+                    logger.error(f"Error closing NATS client: {str(e)}")

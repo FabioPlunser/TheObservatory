@@ -122,7 +122,10 @@ class Server:
             face_id = data.get("face_id")
 
             if not all([company_id, face_id]):
-                raise Exception("Missing required fields")
+                missing_fields = [
+                    field for field in ["company_id", "face_id"] if not data.get(field)
+                ]
+                raise Exception(f"Missing required fields: {', '.join(missing_fields)}")
 
             object_key = f"unknown_faces/{face_id}.jpg"
 
