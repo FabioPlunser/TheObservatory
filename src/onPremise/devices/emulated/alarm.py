@@ -6,7 +6,7 @@ import websockets
 import json
 import pygame
 import os
-from datetime import datetime 
+from datetime import datetime
 from edge_server_discover import EdgeServerDiscovery
 
 logging.basicConfig(
@@ -82,7 +82,7 @@ class Alarm:
 
     def calculate_reconnect_delay(self):
         """Calculate delay before next reconnection attempt using exponential backoff"""
-        delay = min(2**self.reconnect_attempt, self.max_reconnect_delay)
+        delay = 4
         self.reconnect_attempt += 1
         return delay
 
@@ -124,6 +124,7 @@ class Alarm:
                                 asyncio.create_task(self.trigger_alarm())
                             elif data.get("active") == "false":
                                 self.alarm_active = False
+                                self.stop_alarm()
                             if data.get("alive"):
                                 logger.info("Alive message received")
 
@@ -139,15 +140,18 @@ class Alarm:
                 self.websocket = None
                 delay = self.calculate_reconnect_delay()
                 await asyncio.sleep(delay)
+                self.stop_alarm()
 
             except Exception as e:
                 logger.error(f"WebSocket connection error: {e}")
                 self.websocket = None
                 delay = self.calculate_reconnect_delay()
                 await asyncio.sleep(delay)
+                self.stop_alarm()
 
             finally:
                 if self.websocket:
+                    self.stop_alarm()
                     await self.websocket.close()
                     self.websocket = None
 

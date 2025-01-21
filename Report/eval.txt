@@ -1,0 +1,30 @@
+
+Time in seconds when alarm is triggered after unkown person enters the frame
+1. 7
+2. 25
+3. 10 
+4. 20 
+5. 8
+
+Latency per stream: 
+1 
+
+FPS count with stream count 
+1 stream 12 fps 
+2 streams 8 fps 
+3 streams 7 fps
+4 streams 5 fps 
+5 streams 2 fps 
+6 streams 1.8 fps 
+7 streams 1 fps 
+8 streams 1 fps 
+9 streams 0.8 fps 
+10 streams 0.4 fps 
+
+Time in seconds when server restarts till alarm is executed
+1. 5 
+2. 6 
+3. 8 
+4. 7
+5. 8
+

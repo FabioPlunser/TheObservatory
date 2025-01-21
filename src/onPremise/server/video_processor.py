@@ -248,6 +248,7 @@ class VideoProcessor:
         batch_metadata = []
         if len(self.detection_queues) == 0:
             return
+        last_batch_time = time.time()
 
         while not self.stop_event.is_set():
             try:
@@ -273,7 +274,7 @@ class VideoProcessor:
                             if self.device.type == "cuda"
                             else nullcontext()
                         ):
-                            esults = self.model.track(
+                            results = self.model.track(
                                 source=batch_frames,
                                 conf=0.5,
                                 iou=0.7,
@@ -284,7 +285,6 @@ class VideoProcessor:
                                 retina_masks=True,
                             )
 
-                        # Process results in parallel using thread pool
                         processing_futures = []
                         for result, metadata in zip(results, batch_metadata):
                             camera_id = metadata["camera_id"]
@@ -340,7 +340,6 @@ class VideoProcessor:
             if not hasattr(result.boxes, "cls") or not hasattr(result.boxes, "id"):
                 return frame
 
-            # Extract classes and apply mask
             boxes_cls = (
                 result.boxes.cls.cpu().numpy() if result.boxes.cls.numel() > 0 else []
             )
@@ -383,7 +382,7 @@ class VideoProcessor:
                 return frame
 
             # Update Reid with detections
-            global_ids = self.reid_manager.update(camera_id, person_crops, positions)
+            global_ids = self.reid_manager.update(camera_id, person_crops)
             draw_frame = frame.copy()
 
             for box, track_id in zip(boxes_xyxy, track_ids):
