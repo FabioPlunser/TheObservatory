@@ -295,7 +295,6 @@ class Reid:
         # Calculate velocities and accelerations
         velocities = []
         accelerations = []
-        directions = []
 
         for i in range(1, len(pattern)):
             dt = (pattern[i][0] - pattern[i - 1][0]).total_seconds()
@@ -814,7 +813,7 @@ class Reid:
     ) -> None:
         """Upload face image to S3 using presigned URL"""
         try:
-            logger.info(f"Uploading to URL: {url}")
+            logger.debug(f"Uploading to URL: {url}")
 
             async with session.put(
                 url,

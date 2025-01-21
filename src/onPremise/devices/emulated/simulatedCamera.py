@@ -296,7 +296,7 @@ class SimulatedCamera:
                 *output_args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=open(os.devnull, 'w'),
+                stderr=asyncio.subprocess.PIPE,
             )
 
             await self._handle_ffmpeg_process(process, concat_content, stop_event)

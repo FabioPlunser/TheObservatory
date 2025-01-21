@@ -56,9 +56,9 @@ class VideoProcessor:
 
         self.frame_skip = 3
         self.max_queue_size = 5
-        self.target_fps = 5
+        self.target_fps = 10
         self.frame_interval = 1.0 / self.target_fps
-        self.batch_size = 8
+        self.batch_size = 16
 
         # GPU Optimizations
         self._setup_gpu()
@@ -356,21 +356,21 @@ class VideoProcessor:
             # Extract classes and apply mask
             boxes_cls = result.boxes.cls.cpu().numpy() if result.boxes.cls.numel() > 0 else []
             if len(boxes_cls) == 0:
-                return
+                return frame
 
             person_mask = boxes_cls == 0
             if not np.any(person_mask):  # Ensure person_mask is not empty
-                return
+                return frame
 
             # Filter boxes and IDs
             boxes = result.boxes[person_mask]
             if not hasattr(boxes, "id") or boxes.id.numel() == 0:
-                return
+                return frame
 
             track_ids = boxes.id.cpu().numpy().astype(int)
             boxes_xyxy = boxes.xyxy.cpu().numpy()
             if len(track_ids) == 0 or len(boxes_xyxy) == 0:
-                return
+                return frame
 
             # Process person detections
             person_crops = []
