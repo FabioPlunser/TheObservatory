@@ -36,15 +36,15 @@ class VideoProcessor:
 
         # Processing settings
         self.batch_size = batch_size
-        self.frame_skip = 3  # Process every 3rd frame
+        self.frame_skip = 1  # Process every 3rd frame
         self.target_fps = 15  # Target processing FPS
         self.min_frame_interval = 1.0 / self.target_fps
         self.output_scale = (640, 480)
         self.max_batch_age = 0.1
 
         # Thread pools for preprocessing and postprocessing
-        self.preprocess_pool = ThreadPoolExecutor(max_workers=4)
-        self.postprocess_pool = ThreadPoolExecutor(max_workers=4)
+        self.preprocess_pool = ThreadPoolExecutor(max_workers=8)
+        self.postprocess_pool = ThreadPoolExecutor(max_workers=8)
 
         # Redis configuration with connection pooling
         self.redis_pool = redis.ConnectionPool(
@@ -79,14 +79,12 @@ class VideoProcessor:
 
         # Start processing threads
         self._start_processing_threads()
-        
+
         self.FRAME_EXPIRE_TIME = 2  # Reduced from 5 to 2 seconds
-        
+
         # Frame deduplication
         self.processed_frames = {}
         self.frame_history = {}
-
-
 
     def _init_device(self) -> torch.device:
         if torch.cuda.is_available():
@@ -388,7 +386,7 @@ class VideoProcessor:
                     }
 
                     pipe.lpush(frame_queue_key, self._serialize_frame_data(frame_data))
-                    pipe.ltrim(frame_queue_key, 0, 5)  # Keep only last 5 frames
+                    pipe.ltrim(frame_queue_key, 0, 1)  # Keep only last 5 frames
                     pipe.expire(frame_queue_key, self.FRAME_EXPIRE_TIME)
                     pipe.execute()
 
