@@ -122,19 +122,14 @@
 
 %% first slide
 \begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
-	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
-	\end{enumerate}
-	
+\frametitle{System architecture}
+\begin{itemize}
+	\item IoT layer provides video sources (ESP32-CAM, webcams, etc.)
+	\item Edge server handles real-time detection and tracking
+	\item Cloud services (AWS S3, Rekognition) manage storage and face matching
+	\item Modular microservices for easy integration of new detection or storage components
+	\item Automatic device discovery (mDNS) reduces manual setup
+\end{itemize}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -142,39 +137,25 @@
 
 %% first slide
 \begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
-	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
-	\end{enumerate}
-	
+\frametitle{Datasets, Tools \& Frameworks}
+\begin{itemize}
+	\item Datasets: WiseNet for surveillance scenarios
+	\item Tools: FFmpeg, OpenCV, WebSockets
+	\item Frameworks: YOLOv8 for detection, ByteTrack + torchreid for tracking
+\end{itemize}
 \end{frame}
 
 %% this just generates PDF bookmarks
-\subsection{Ressources}
+\subsection{Resources}
 
 %% first slide
 \begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
-	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
-	\end{enumerate}
-	
+\frametitle{Resources}
+\begin{itemize}
+	\item NATS for message-based communication
+	\item SQLite database for edge storage
+	\item Svelte-based web interface for monitoring and control
+\end{itemize}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -182,19 +163,12 @@
 
 %% first slide
 \begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
-	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
-	\end{enumerate}
-	
+\frametitle{Live Demo}
+\begin{itemize}
+	\item Real-time detection of faces on incoming video streams
+	\item Automatic alarm trigger upon unknown face detection
+	\item Web-based dashboard for live status updates
+\end{itemize}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -202,19 +176,14 @@
 
 %% first slide
 \begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
-	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
-	\end{enumerate}
-	
+\frametitle{Evaluation Results}
+\begin{itemize}
+	\item Parallel stream handling performance measured at different loads
+	\item Scalable but requires GPU resources for higher frame rates
+	\item Accurate detection for most real-time scenarios with partial false positives
+	\item Measured resource usage (GPU/CPU) at various parallel processing levels
+	\item Observed minimal latency when face detection leverages hardware acceleration
+\end{itemize}
 \end{frame}
 
 
