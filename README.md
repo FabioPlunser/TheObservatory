@@ -34,7 +34,7 @@ The start script should create a virtual environment and install all the require
 It also checks if the aws credentials are set up correctly and if they are valid.
 When the server is started you will need to input the number of cameras you want to simulate(Webcam feed)
 after that the number of Alarms you want to simulate. And if you want to us the 6 simulated camera feed from the wiseNet Dataset(data\video_sets\... beside the src folder). 
-
+WiseNet: https://data.4tu.nl/articles/dataset/WiseNET_Multi-camera_dataset/12714416
 Python 3.12 is required to run the project.
 
 This will do everything automatically for you.
