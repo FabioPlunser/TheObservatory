@@ -43,18 +43,6 @@
     alarms = data.alarms;
   }
 
-  async function dismissAlarm() {
-    try {
-      const res = await fetch(`${SERVER_URL}/alarm/reset`, {
-        method: "POST",
-      });
-      if (res.ok) {
-        alarms = [];
-      }
-    } catch (error) {
-      console.error("Error dismissing alarm:", error);
-    }
-  }
 </script>
 
 <main class="mx-4">
