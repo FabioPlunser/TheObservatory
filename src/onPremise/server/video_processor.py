@@ -110,7 +110,7 @@ class VideoProcessor:
 
     def _init_model(self):
         """Initialize model with additional optimizations"""
-        model = YOLO("yolov8n.pt")
+        model = YOLO("yolov8n-face.pt")
         if self.device.type == "cuda":
             model.to(self.device)
             model.fuse()
@@ -273,12 +273,11 @@ class VideoProcessor:
                         ):
                             results = self.model.track(
                                 source=batch_frames,
-                                conf=0.5,
+                                conf=0.7,
                                 iou=0.7,
                                 persist=True,
                                 tracker="bytetrack.yaml",
-                                verbose=False,
-                                classes=[0]
+                                verbose=False
                             )
 
                             processing_futures = []
@@ -304,7 +303,7 @@ class VideoProcessor:
                                         _, buffer = cv2.imencode(
                                             ".jpg",
                                             processed_frame,
-                                            [cv2.IMWRITE_JPEG_QUALITY, 80],
+                                            [cv2.IMWRITE_JPEG_QUALITY, 90],
                                         )
 
                                         try:
@@ -362,16 +361,23 @@ class VideoProcessor:
             # Process person detections
             person_crops = []
             positions = {}
+            padding = 10
+
 
             for box, track_id in zip(boxes_xyxy, track_ids):
                 x1, y1, x2, y2 = map(int, box)
+
+                x1 = max(0, x1 - padding)
+                y1 = max(0, y1 - padding)
+                x2 = min(frame.shape[1], x2 + padding)
+                y2 = min(frame.shape[0], y2 + padding)
 
                 # Validate bounding box coordinates
                 if x1 < 0 or y1 < 0 or x2 >= frame.shape[1] or y2 >= frame.shape[0]:
                     continue
 
                 crop = frame[y1:y2, x1:x2]
-                if crop.size == 0 or crop.shape[0] < 30 or crop.shape[1] < 30:
+                if crop.size == 0 or crop.shape[0] < 5 or crop.shape[1] < 5:
                     continue
 
                 person_crops.append((track_id, crop.copy()))

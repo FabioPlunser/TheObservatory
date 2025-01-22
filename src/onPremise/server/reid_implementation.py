@@ -64,12 +64,12 @@ class Reid:
         feature_history_size: int = 20,
         reid_threshold: float = 0.5,
         max_feature_age: int = 7200,
-        batch_size: int = 32,
+        batch_size: int = 64,
         device=None,
     ):
         self.device = device if device else self._init_device()
         self.model = self._init_model()
-        self.scaler = amp.GradScaler('cuda')
+        self.scaler = torch.amp.GradScaler('cuda')
 
         # Optimize transform pipeline
         self.transform = transforms.Compose(
