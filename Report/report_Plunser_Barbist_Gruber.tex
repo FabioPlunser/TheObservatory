@@ -346,6 +346,7 @@ The system's accuracy is evaluated based on the following metrics:
 \begin{itemize}
       \item \textbf{Face Detection Accuracy:} The system's ability to detect faces in video streams accurately.
       \item \textbf{Person Tracking Accuracy:} The system's ability to track individuals across multiple camera views.
+      \item \textbf{Alarm Trigger Accuracy:} The system's ability to trigger an alarm upon detecting an unknown face.
       \item \textbf{Cloud Processing Accuracy:} The system's ability to minimize cloud processing costs.
       \item \textbf{Real-time Monitoring Accuracy:} The system's ability to provide real-time video stream monitoring. 
 \end{itemize}
@@ -358,28 +359,33 @@ System Used:\\
 \textbf{RAM:} 32GB\\
 \textbf{OS:} Windows 11\\
 System Performance:\\
-\textbf{CPU:} 25\%-55\%\\
+\textbf{CPU:} 25\%-45\%\\
 \textbf{GPU:} $\approx$ 80\%\\
-\textbf{RAM:} 20GB
+\textbf{RAM:} 12GB
 \subsubsection{Methodology:}
 At first we tested 1 webcam + the 6 video feed from the WiseNet dataset. We let the whole video play without uploading any know faces.
 After we moved the uploaded Faces from the unknown folder to the known folder and let the video play again.
-As a last step we uploaded manually croped faces(20) from the video feed to the known folder and let the video play again.
-YOLOv8n was used for face detection and tracking.
+YOLOv8n-face was used for face detection and tracking.
 \subsubsection{Face Detection Accuracy}
-After the first test we had 48 unknown faces triggering the alarm but only 50\% of this images were actually faces.\\
+After the first test we had 37 unknown faces triggering the alarm with 90\% of this images were actually faces.\\
 After the second test we had 5 new unknown faces triggering the alarm but only 20\% of this images were actually faces.\\
-After the last test we had 31 new unknown faces triggering the alarm but 70\% of this images were actually faces.\\
+
+\subsubsection{Alarm Trigger Accuracy}
+At the first test were we had 37 unknown faces all of them triggered the alarm.\\
+At the second test were we had 25 unknown faces only 11 of them triggered the alarm.\\
 
 \subsubsection{Person Tracking Accuracy}
 The person tracking mostly worked with some difficulties when there work multiple people close together.\\
 The tracking across multiple camera views worked only sometimes.
 
 \subsubsection{Cloud Processing Accuracy}
-There were no images uploaded without at least one unkown preson in the frames at the time, but 
-sometime we had a delay detecting a know person and uploading the image to the cloud.
-Which resulted in a inaccurate frame uploaded to the cloud where the person was not in the frame anymore.
-
+During the full testing around 1000 aws Rekognition requests were made. Each Test took around 20 minutes.\\
+\begin{figure}[ht]
+      \centering
+      \includegraphics[width=1\linewidth]{images/aws_rekognition.png}
+      \caption{AWS Rekognition requests.}
+      \label{fig:aws-rekognition}
+\end{figure}
 
 \subsubsection{Real-time Monitoring Accuracy}
 The webcam and the simulated cameras did run at around 15 fps.

@@ -64,7 +64,7 @@ class Reid:
         feature_history_size: int = 20,
         reid_threshold: float = 0.5,
         max_feature_age: int = 7200,
-        batch_size: int = 64,
+        batch_size: int = 16,
         device=None,
     ):
         self.device = device if device else self._init_device()
@@ -329,7 +329,7 @@ class Reid:
                         reid_features=feat,
                         appearance_history=[feat],
                         camera_history={camera_id: [current_time]},
-                        confidence=0.3,
+                        confidence=0.5,
                     )
                     self.person_features[new_id] = new_person
                     track_to_global[track_id] = new_id

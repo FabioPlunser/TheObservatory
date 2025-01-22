@@ -273,8 +273,8 @@ class VideoProcessor:
                         ):
                             results = self.model.track(
                                 source=batch_frames,
-                                conf=0.7,
-                                iou=0.7,
+                                conf=0.6,
+                                iou=0.6,
                                 persist=True,
                                 tracker="bytetrack.yaml",
                                 verbose=False
@@ -350,7 +350,7 @@ class VideoProcessor:
 
             # Filter boxes and IDs
             boxes = result.boxes[person_mask]
-            if not hasattr(boxes, "id") or boxes.id.numel() == 0:
+            if not hasattr(boxes, "id"):
                 return frame
 
             track_ids = boxes.id.cpu().numpy().astype(int)
