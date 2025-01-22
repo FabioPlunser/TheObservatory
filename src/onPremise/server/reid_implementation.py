@@ -63,13 +63,13 @@ class Reid:
         self,
         feature_history_size: int = 20,
         reid_threshold: float = 0.5,
-        max_feature_age: int = 7200,
+        max_feature_age: int = 1800,
         batch_size: int = 32,
         device=None,
     ):
         self.device = device if device else self._init_device()
         self.model = self._init_model()
-        self.scaler = amp.GradScaler('cuda')
+        self.scaler = torch.amp.GradScaler('cuda')
 
         # Optimize transform pipeline
         self.transform = transforms.Compose(
@@ -329,7 +329,7 @@ class Reid:
                         reid_features=feat,
                         appearance_history=[feat],
                         camera_history={camera_id: [current_time]},
-                        confidence=0.3,
+                        confidence=0.5,
                     )
                     self.person_features[new_id] = new_person
                     track_to_global[track_id] = new_id

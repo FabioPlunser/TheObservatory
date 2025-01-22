@@ -102,18 +102,16 @@
 
 %% first slide
 \begin{frame}
-\frametitle{Overview}
+	\frametitle{Overview}
 
-  
-  \bigskip
-  \begin{enumerate}
-  	\item {System architecture}
-  	\item Datasets, Tools, Frameworks
-  	\item Resources used
-  	\item {Live demo}
-  	\item {Evaluation results}
-  	\item Summary and future prospects
-  \end{enumerate}
+
+	\bigskip
+	\begin{enumerate}
+		\item {System architecture}
+		\item {Datasets, Models, Tools \& Frameworks}
+		\item {Live demo}
+		\item {Evaluation results}
+	\end{enumerate}
 
 \end{frame}
 
@@ -122,19 +120,23 @@
 
 %% first slide
 \begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
+	\frametitle{System architecture}
 	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
+		\item IoT layer provides video sources and handles alarms (ESP32-CAM, webcams, alarms, etc.)
+		\item RTSP Server running on edge
+		\item Edge server handles real-time detection and tracking, also auto discovery for iot devices MDNs
+		\item Nast server for messaging between edge and cloud
+		\item Cloud services (AWS S3, Rekognition) manage storage and face matching
 	\end{enumerate}
-	
+\end{frame}
+
+\begin{frame}
+	\frametitle{System architecture}
+	\vspace{1cm}
+	\begin{figure}
+		\centering
+		\includegraphics{_images/Distributed_Systems_Architecture_V2.png}
+	\end{figure}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -142,39 +144,23 @@
 
 %% first slide
 \begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
-	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
-	\end{enumerate}
-	
-\end{frame}
-
-%% this just generates PDF bookmarks
-\subsection{Ressources}
-
-%% first slide
-\begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
-	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
-	\end{enumerate}
-	
+	\frametitle{Datasets, Models, Tools \& Frameworks}
+	\begin{itemize}
+		\item Datasets: WiseNet for surveillance scenarios
+		\item Models:
+		      \begin{itemize}
+			      \item YOLOv8n-face with ByteTrack for multi object face detection
+			      \item Mobilenet\_v3\_small for REID implementation
+		      \end{itemize}
+		\item Tools: FFmpeg, OpenCV, RTSP, NATS, SQLite,
+		\item Frameworks: 
+		\begin{itemize}
+			\item PyTorch 
+			\item FastAPI
+			\item Docker
+			\item Svelte  
+		\end{itemize}
+	\end{itemize}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -182,19 +168,13 @@
 
 %% first slide
 \begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
-	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
-	\end{enumerate}
-	
+	\frametitle{Live Demo}
+	\begin{itemize}
+		\item Automatic connection Iot to edge server
+		\item Real-time detection of faces on incoming video streams
+		\item Automatic alarm trigger upon unknown face detection
+		\item Web-based dashboard for live status updates
+	\end{itemize}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -202,42 +182,37 @@
 
 %% first slide
 \begin{frame}
-	\frametitle{Overview}
-	
-	
-	\bigskip
-	\begin{enumerate}
-		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
-		\item {Live demo}
-		\item {Evaluation results}
-		\item Summary and future prospects
-	\end{enumerate}
-	
+	\frametitle{Evaluation Results}
+	\begin{itemize}
+		\item Parallel stream handling performance measured at different loads
+		\item Scalable but requires GPU resources for higher frame rates
+		\item Measured resource usage (GPU/CPU) at various parallel processing levels
+		\item Measured average 15 fps with 6 parallel cameras
+		\item Detect unknown face in under 2 seconds (average)
+		\item Cloud requests remain under 1s on average
+		\item $\approx$ 20\% of uploaded face images do not contain a face
+	\end{itemize}
 \end{frame}
 
-
+\begin{frame}
+\frametitle{Additional Metrics}
+\begin{itemize}
+	\item Frame skip rate: 25\% at high loads (over 8 cameras)
+	\item GPU usage: up to 80\% on NVIDIA RTX 3080 for detection
+	\item CPU usage: 40\% average on 12-core AMD Ryzen 9
+	\item Memory usage: 12GB average with 6 camera feeds
+\end{itemize}
+\end{frame}
+\begin{frame}
+	\frametitle{Additional Metrics}
+	\begin{figure}
+		\centering
+		\includegraphics[width=0.80\linewidth]{_images/total_processing_time.png}
+	\end{figure}
+\end{frame}
 %% to show a last slide similar to the title slide: information for the last page
 \title[TheObservatory]{Distributed Systems Project}
 \subtitle{TheObservatory}
 \section{Thanks}
 
-
-%% appendix of 'extra' slides
-\appendix
-
-\begin{frame} % MAYBE data of diagrams?
-\frametitle{Appendix 1}
-    This slide does not increase the total number of slides and can hold additional information
-    that you may be asked about after the end of the presentation.
-\end{frame}
-
-\begin{frame}
-\frametitle{Appendix 2}
-    This slide does not increase the total number of slides and can hold additional information
-    that you may be asked about after the end of the presentation.
-\end{frame}
-
 \end{document}
-

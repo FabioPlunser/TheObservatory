@@ -492,7 +492,7 @@ class Router:
 
                 cameras = await self.db.get_cameras_which_detected_unknown_face()
                 if not cameras:
-                    return {"alarms": None}
+                    pass
 
                 # Safely construct alarm data
                 alarm_data = []

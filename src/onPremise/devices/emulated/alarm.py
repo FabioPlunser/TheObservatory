@@ -124,7 +124,7 @@ class Alarm:
                                 asyncio.create_task(self.trigger_alarm())
                             elif data.get("active") == "false":
                                 self.alarm_active = False
-                                self.stop_alarm()
+                                await self.stop_alarm()
                             if data.get("alive"):
                                 logger.info("Alive message received")
 
@@ -137,21 +137,23 @@ class Alarm:
                 logger.warning(
                     "WebSocket connection closed, attempting to reconnect..."
                 )
+            except websockets.exceptions.ConnectionClosed:
+                logger.warning("WebSocket connection closed, attempting to reconnect...")
                 self.websocket = None
                 delay = self.calculate_reconnect_delay()
                 await asyncio.sleep(delay)
-                self.stop_alarm()
+                await self.stop_alarm()
 
             except Exception as e:
                 logger.error(f"WebSocket connection error: {e}")
                 self.websocket = None
                 delay = self.calculate_reconnect_delay()
                 await asyncio.sleep(delay)
-                self.stop_alarm()
+                await self.stop_alarm()
 
             finally:
                 if self.websocket:
-                    self.stop_alarm()
+                    await self.stop_alarm()
                     await self.websocket.close()
                     self.websocket = None
 
