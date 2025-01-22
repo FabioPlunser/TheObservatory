@@ -102,18 +102,18 @@
 
 %% first slide
 \begin{frame}
-\frametitle{Overview}
+	\frametitle{Overview}
 
-  
-  \bigskip
-  \begin{enumerate}
-  	\item {System architecture}
-  	\item Datasets, Tools, Frameworks
-  	\item Resources used
-  	\item {Live demo}
-  	\item {Evaluation results}
-  	\item Summary and future prospects
-  \end{enumerate}
+
+	\bigskip
+	\begin{enumerate}
+		\item {System architecture}
+		\item Datasets, Tools, Frameworks
+		\item Resources used
+		\item {Live demo}
+		\item {Evaluation results}
+		\item Summary and future prospects
+	\end{enumerate}
 
 \end{frame}
 
@@ -122,14 +122,14 @@
 
 %% first slide
 \begin{frame}
-\frametitle{System architecture}
-\begin{itemize}
-	\item IoT layer provides video sources (ESP32-CAM, webcams, etc.)
-	\item Edge server handles real-time detection and tracking
-	\item Cloud services (AWS S3, Rekognition) manage storage and face matching
-	\item Modular microservices for easy integration of new detection or storage components
-	\item Automatic device discovery (mDNS) reduces manual setup
-\end{itemize}
+	\frametitle{System architecture}
+	\begin{enumerate}
+		\item IoT layer provides video sources and handles alarms (ESP32-CAM, webcams, alarms, etc.)
+		\item RTSP Server running on edge
+		\item Edge server handles real-time detection and tracking, also auto discovery for iot devices MDNs
+		\item Nast server for messaging between edge and cloud
+		\item Cloud services (AWS S3, Rekognition) manage storage and face matching
+	\end{enumerate}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -137,25 +137,23 @@
 
 %% first slide
 \begin{frame}
-\frametitle{Datasets, Tools \& Frameworks}
-\begin{itemize}
-	\item Datasets: WiseNet for surveillance scenarios
-	\item Tools: FFmpeg, OpenCV, WebSockets
-	\item Frameworks: YOLOv8-face for detection, ByteTrack + torchreid for tracking
-\end{itemize}
-\end{frame}
-
-%% this just generates PDF bookmarks
-\subsection{Resources}
-
-%% first slide
-\begin{frame}
-\frametitle{Resources}
-\begin{itemize}
-	\item NATS for message-based communication
-	\item SQLite database for edge storage
-	\item Svelte-based web interface for monitoring and control
-\end{itemize}
+	\frametitle{Datasets, Models, Tools \& Frameworks}
+	\begin{itemize}
+		\item Datasets: WiseNet for surveillance scenarios
+		\item Models:
+		      \begin{itemize}
+			      \item YOLOv8n-face with ByteTrack for multi object face detection
+			      \item Mobilenet\_v3\_small for REID implementation
+		      \end{itemize}
+		\item Tools: FFmpeg, OpenCV, RTSP, NATS, SQLite,
+		\item Frameworks: 
+		\begin{itemize}
+			\item PyTorch 
+			\item FastAPI
+			\item Docker
+			\item Svelte  
+		\end{itemize}
+	\end{itemize}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -163,12 +161,13 @@
 
 %% first slide
 \begin{frame}
-\frametitle{Live Demo}
-\begin{itemize}
-	\item Real-time detection of faces on incoming video streams
-	\item Automatic alarm trigger upon unknown face detection
-	\item Web-based dashboard for live status updates
-\end{itemize}
+	\frametitle{Live Demo}
+	\begin{itemize}
+		\item Automatic connection Iot to edge server
+		\item Real-time detection of faces on incoming video streams
+		\item Automatic alarm trigger upon unknown face detection
+		\item Web-based dashboard for live status updates
+	\end{itemize}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -176,30 +175,14 @@
 
 %% first slide
 \begin{frame}
-\frametitle{Evaluation Results}
-\begin{itemize}
-	\item Parallel stream handling performance measured at different loads
-	\item Scalable but requires GPU resources for higher frame rates
-	\item Accurate detection for most real-time scenarios with partial false positives
-	\item Measured resource usage (GPU/CPU) at various parallel processing levels
-	\item Observed minimal latency when face detection leverages hardware acceleration
-\end{itemize}
-\end{frame}
-
-%% this just generates PDF bookmarks
-\subsection{Summary and Future Prospects}
-\begin{frame}
-\frametitle{Summary and Future Prospects}
-
-\begin{itemize}
-	\item All the required features have been implemented
-	\item Future work includes:
-	\item {Improved face matching accuracy}
-	\item {Soother camera feeds and better tracking}
-	\item {Better User Interface}
-	\item {Load balancing and failover mechanisms}
-\end{itemize}
-
+	\frametitle{Evaluation Results}
+	\begin{itemize}
+		\item Parallel stream handling performance measured at different loads
+		\item Scalable but requires GPU resources for higher frame rates
+		\item Accurate detection for most real-time scenarios with partial false positives
+		\item Measured resource usage (GPU/CPU) at various parallel processing levels
+		\item Observed minimal latency when face detection leverages hardware acceleration
+	\end{itemize}
 \end{frame}
 
 
@@ -208,5 +191,20 @@
 \subtitle{TheObservatory}
 \section{Thanks}
 
-\end{document}
 
+%% appendix of 'extra' slides
+\appendix
+
+\begin{frame} % MAYBE data of diagrams?
+	\frametitle{Appendix 1}
+	This slide does not increase the total number of slides and can hold additional information
+	that you may be asked about after the end of the presentation.
+\end{frame}
+
+\begin{frame}
+	\frametitle{Appendix 2}
+	This slide does not increase the total number of slides and can hold additional information
+	that you may be asked about after the end of the presentation.
+\end{frame}
+
+\end{document}
