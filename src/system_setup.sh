@@ -350,19 +350,21 @@ start_devices() {
     read -p "Enter number of cameras to emulate: " num_cameras
     read -p "Enter number of alarms to emulate: " num_alarms
     read -p "Do you want to use simulated data? (y/n): " use_simulated_data
-    
+
+    if ["$num_cameras" -gt 0]; then
     echo "📸 Starting $num_cameras camera(s)..."
     camera_pids=()
-    for ((i=1; i<=$num_cameras; i++)); do
-        python onPremise/devices/emulated/camera.py &
-        camera_pids+=($!)
-    done
+    python onPremise/devices/emulated/camera.py &
+    camera_pids+=($!)
+
+    num_cameras=$((num_cameras-1))
+    fi
 
     if [ "$use_simulated_data" = "y" ]; then
         echo "📸 Starting simulated cameras ..."
         # Start in a new process group
-        setsid python onPremise/devices/emulated/simulatedCamera.py &
-        simulated_camera_pid=$!
+        setsid python onPremise/devices/emulated/simulatedCamera.py --streams "$num_cameras" &
+          simulated_camera_pid=$!
     fi
 
     echo "🚨 Starting $num_alarms alarm(s)..."
