@@ -255,7 +255,6 @@ Our evaluation focuses on three key aspects:
                         Total processing time & 0.675 & 1.360 & 0.869 & 0.794  \\\hline
                         Presigned url request time & 0.120 & 0.194 & 0.143 & 0.133  \\\hline
                         Image upload time & 0.499 & 1.161 & 0.720 & 0.657  \\\hline
-                        Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
                   \end{tabulary}
                   \\
                   \caption{24 Images and 5 parallel.}
@@ -274,7 +273,6 @@ Our evaluation focuses on three key aspects:
                         Total processing time & 0.087 & 1.648 & 1.224 & 1.189  \\\hline
                         Presigned url request time & 0.214 & 0.349 & 0.266 & 0.270  \\\hline
                         Image upload time & 0.609 & 1.372 & 0.954 & 0.933  \\\hline
-                        Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
                   \end{tabulary}
                   \\
                   \caption{24 Images and 24 parallel.}
@@ -294,7 +292,6 @@ Our evaluation focuses on three key aspects:
                         Total processing time & 1.162 & 8.845 & 5.962 & 7.779  \\\hline
                         Presigned url request time & 0.509 & 1.659 & 1.089 & 1.061  \\\hline
                         Image upload time & 0.588 & 7.720 & 4.869 & 6.447  \\\hline
-                        Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
                   \end{tabulary}
                   \\
                   \caption{100 Images and 100 parallel.}
@@ -313,7 +310,6 @@ Our evaluation focuses on three key aspects:
                         Total processing time & 1.487 & 8.254 & 5.370 & 5.580  \\\hline
                         Presigned url request time & 0.820 & 2.920 & 1.354 & 1.046 \\\hline
                         Image upload time & 0.649 & 6.426 & 4.012 & 4.507  \\\hline
-                        Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
                   \end{tabulary}
                   \\
                   \caption{200 Images and 200 parallel.}
@@ -358,30 +354,29 @@ The system's accuracy is evaluated based on the following metrics:
 \end{itemize}
 
 \subsubsection{Test Setup}
-
 System Used:\\
-\textbf{CPU:} AMD Ryzen 9 3900X 12-Core $\approx$ 4.10GHz\\
-\textbf{GPU:} NVIDIA GeForce RTX 3080\\
-\textbf{RAM:} 32GB\\
-\textbf{OS:} Windows 11\\
+\hspace*{20pt} \textbf{CPU:} AMD Ryzen 9 3900X 12-Core $\approx$ 4.10GHz\\
+\hspace*{20pt} \textbf{GPU:} NVIDIA GeForce RTX 3080\\
+\hspace*{20pt} \textbf{RAM:} 32GB\\
+\hspace*{20pt} \textbf{OS:} Windows 11\\
 System Performance:\\
-\textbf{CPU:} 25\%-45\%\\
-\textbf{GPU:} $\approx$ 80\%\\
-\textbf{RAM:} 12GB
+\hspace*{20pt} \textbf{CPU:} 25\%-45\%\\
+\hspace*{20pt} \textbf{GPU:} $\approx$ 80\%\\
+\hspace*{20pt} \textbf{RAM:} 12GB
 \subsubsection{Methodology:}
 At first we tested 1 webcam + the 6 video feed from the WiseNet dataset. We let the whole video play without uploading any know faces beforehand.
 After that we moved the uploaded Faces from the unknown folder to the known folder and let the video play again.
 YOLOv8n-face was the model used for the face detection. Each test took around 20 minutes.
 \subsubsection{Face Detection Accuracy}
-After the first test we had 37 unknown faces, 90\% of those images were actually faces.\\
+After the first test we had 37 unknown faces, 90\% of those images were actually faces.
 After the second test we had 25 new unknown faces, 70\% of those images were actually faces.\\
 
 \subsubsection{Alarm Trigger Accuracy}
-At the first test were we had 37 unknown faces all of them triggered the alarm.\\
+At the first test were we had 37 unknown faces all of them triggered the alarm.
 At the second test were we had 25 unknown faces only 11 of them triggered the alarm.\\
 
 \subsubsection{Person Tracking Accuracy}
-The person tracking mostly worked with some difficulties when there work multiple people close together.\\
+The person tracking mostly worked with some difficulties when there where multiple people close together.
 The tracking across multiple camera views worked only sometimes.
 
 \subsubsection{Cloud Processing Accuracy}

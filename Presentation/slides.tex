@@ -108,11 +108,9 @@
 	\bigskip
 	\begin{enumerate}
 		\item {System architecture}
-		\item Datasets, Tools, Frameworks
-		\item Resources used
+		\item {Datasets, Models, Tools \& Frameworks}
 		\item {Live demo}
 		\item {Evaluation results}
-		\item Summary and future prospects
 	\end{enumerate}
 
 \end{frame}
@@ -130,6 +128,15 @@
 		\item Nast server for messaging between edge and cloud
 		\item Cloud services (AWS S3, Rekognition) manage storage and face matching
 	\end{enumerate}
+\end{frame}
+
+\begin{frame}
+	\frametitle{System architecture}
+	\vspace{1cm}
+	\begin{figure}
+		\centering
+		\includegraphics{_images/Distributed_Systems_Architecture_V2.png}
+	\end{figure}
 \end{frame}
 
 %% this just generates PDF bookmarks
@@ -179,32 +186,33 @@
 	\begin{itemize}
 		\item Parallel stream handling performance measured at different loads
 		\item Scalable but requires GPU resources for higher frame rates
-		\item Accurate detection for most real-time scenarios with partial false positives
 		\item Measured resource usage (GPU/CPU) at various parallel processing levels
-		\item Observed minimal latency when face detection leverages hardware acceleration
+		\item Measured average 15 fps with 6 parallel cameras
+		\item Detect unknown face in under 2 seconds (average)
+		\item Cloud requests remain under 1s on average
+		\item $\approx$ 20\% of uploaded face images do not contain a face
 	\end{itemize}
 \end{frame}
 
-
+\begin{frame}
+\frametitle{Additional Metrics}
+\begin{itemize}
+	\item Frame skip rate: 25\% at high loads (over 8 cameras)
+	\item GPU usage: up to 80\% on NVIDIA RTX 3080 for detection
+	\item CPU usage: 40\% average on 12-core AMD Ryzen 9
+	\item Memory usage: 12GB average with 6 camera feeds
+\end{itemize}
+\end{frame}
+\begin{frame}
+	\frametitle{Additional Metrics}
+	\begin{figure}
+		\centering
+		\includegraphics[width=0.80\linewidth]{_images/total_processing_time.png}
+	\end{figure}
+\end{frame}
 %% to show a last slide similar to the title slide: information for the last page
 \title[TheObservatory]{Distributed Systems Project}
 \subtitle{TheObservatory}
 \section{Thanks}
-
-
-%% appendix of 'extra' slides
-\appendix
-
-\begin{frame} % MAYBE data of diagrams?
-	\frametitle{Appendix 1}
-	This slide does not increase the total number of slides and can hold additional information
-	that you may be asked about after the end of the presentation.
-\end{frame}
-
-\begin{frame}
-	\frametitle{Appendix 2}
-	This slide does not increase the total number of slides and can hold additional information
-	that you may be asked about after the end of the presentation.
-\end{frame}
 
 \end{document}
