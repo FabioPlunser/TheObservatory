@@ -33,8 +33,7 @@ VITE_SERVER_URL=http://localhost:8000
 The start script should create a virtual environment and install all the required packages.
 It also checks if the aws credentials are set up correctly and if they are valid.
 When the server is started you will need to input the number of cameras you want to simulate(Webcam feed)
-after that the number of Alarms you want to simulate. And if you want to us the 6 simulated camera feed 
-from the wiseNet Dataset(src\data\video_sets\...).
+after that the number of Alarms you want to simulate. And if you want to us the 6 simulated camera feed from the wiseNet Dataset(data\video_sets\... beside the src folder). 
 
 Python 3.12 is required to run the project.
 
@@ -45,17 +44,11 @@ The information below are not up to date at the moment.
 
 Or else for `deveolpment` you can do the following: 
 
-To run the project its recommended to use an virtual environment. To create a virtual environment run the following command:
-```bash
-python3 -m venv venv
-```
-To activate the virtual environment run the following command:
-```bash
-source venv/bin/activate
 ```
 To install the required packages run the following command:
 ```bash
-pip install -r requirements.txt
+pip install -r src\onPremise\devices\emulated\requirements.txt
+pip install -r src\onPremise\server\requirements.txt
 ```
 Bun or node-js is required to run the website.
 For Bun:
