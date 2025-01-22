@@ -63,8 +63,8 @@ class Reid:
         self,
         feature_history_size: int = 20,
         reid_threshold: float = 0.5,
-        max_feature_age: int = 7200,
-        batch_size: int = 16,
+        max_feature_age: int = 1800,
+        batch_size: int = 32,
         device=None,
     ):
         self.device = device if device else self._init_device()

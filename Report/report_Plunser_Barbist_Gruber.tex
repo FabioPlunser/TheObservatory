@@ -361,12 +361,12 @@ System Performance:\\
 \textbf{GPU:} $\approx$ 80\%\\
 \textbf{RAM:} 12GB
 \subsubsection{Methodology:}
-At first we tested 1 webcam + the 6 video feed from the WiseNet dataset. We let the whole video play without uploading any know faces.
-After we moved the uploaded Faces from the unknown folder to the known folder and let the video play again.
-YOLOv8n-face was used for face detection and tracking.
+At first we tested 1 webcam + the 6 video feed from the WiseNet dataset. We let the whole video play without uploading any know faces beforehand.
+After that we moved the uploaded Faces from the unknown folder to the known folder and let the video play again.
+YOLOv8n-face was the model used for the face detection. Each test took around 20 minutes.
 \subsubsection{Face Detection Accuracy}
-After the first test we had 37 unknown faces triggering the alarm with 90\% of this images were actually faces.\\
-After the second test we had 5 new unknown faces triggering the alarm but only 20\% of this images were actually faces.\\
+After the first test we had 37 unknown faces, 90\% of those images were actually faces.\\
+After the second test we had 25 new unknown faces, 70\% of those images were actually faces.\\
 
 \subsubsection{Alarm Trigger Accuracy}
 At the first test were we had 37 unknown faces all of them triggered the alarm.\\
@@ -386,15 +386,18 @@ During the full testing around 1000 aws Rekognition requests were made. Each Tes
 \end{figure}
 
 \subsubsection{Real-time Monitoring Accuracy}
-The webcam and the simulated cameras did run at around 15 fps.
+The webcam and the simulated cameras did run at around 15 fps. After some time the the simulated cameras feed unsynced from each other, but 
+all the feeds were still running.   
 
 \section{Shortcomings}
 
 \begin{itemize}
       \item \textbf{Performance:} The system's performance is limited by the processing power of the edge device, resulting in reduced frame rates for multiple video streams.
-            A dedicated GPU is required for optimal performance.
+            A dedicated GPU is required for optimal performance. The models used for face detection and tracking where all the smallest models available, so there is still some 
+            room for improvement accuracy wise.
       \item \textbf{Scalability:} The system's scalability is limited by the edge device's processing capabilities, with performance degradation at higher parallel processing loads.
-      \item \textbf{Reliability:} Sometime not only faces are uploaded to the cloud, but also the back of the person. Or even send the images where the person is out of the frame.
+                                    The system itself had a couple single points of failure, like the NATS server or the edge server.
+      \item \textbf{Reliability:} The system overall did run stapel but we had some problem with correctly cleaning up used memory. 
 \end{itemize}
 
 
