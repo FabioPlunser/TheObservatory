@@ -59,9 +59,7 @@ class VideoProcessor:
 
         self.frame_skip = 3
         self.max_queue_size = 10
-        self.target_fps = 10
-        self.frame_interval = 1.0 / self.target_fps
-        self.batch_size = 32
+        self.batch_size = 16
 
         self.thread_pool = ThreadPoolExecutor(max_workers=mp.cpu_count())
 
@@ -126,7 +124,7 @@ class VideoProcessor:
             self.result_queues[camera_id] = queue.Queue(maxsize=self.max_queue_size)
             self.detection_queues[camera_id] = queue.Queue(maxsize=self.max_queue_size)
             self.fps_counters[camera_id] = {"frames": 0, "last_check": time.time()}
-            self.frame_counter[camera_id] = {"frame": 1}
+            self.frame_counter[camera_id] = {"frame": 0}
             self.stop_events[camera_id] = threading.Event()
             logger.info(f"Adding camera {camera_id} with RTSP URL: {rtsp_url}")
 
@@ -201,9 +199,6 @@ class VideoProcessor:
                         continue
                     retry_count = 0
 
-                # Set optimal buffer size
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
                 ret, frame = cap.read()
                 if not ret:
                     if cap is not None:
@@ -220,6 +215,10 @@ class VideoProcessor:
 
                 if frame.shape[0] > 480 or frame.shape[1] > 640:
                     frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
+                if frame_buffer is None or frame_buffer.shape != frame.shape:
+                    frame_buffer = np.empty_like(frame)
+                np.copyto(frame_buffer, frame)
+
                 try:
                     self.detection_queues[camera_id].put_nowait(
                         {
@@ -246,28 +245,26 @@ class VideoProcessor:
         """Optimized detection worker with improved batch processing"""
         batch_frames = []
         batch_metadata = []
-        if len(self.detection_queues) == 0:
-            return
-        last_batch_time = time.time()
 
         while not self.stop_event.is_set():
             try:
-
-
+                # Collect frames for batch processing
                 for camera_id in list(self.detection_queues.keys()):
                     try:
                         while len(batch_frames) < self.batch_size:
                             try:
                                 data = self.detection_queues[camera_id].get_nowait()
-                                batch_frames.append(data["frame"])
-                                batch_metadata.append(data)
+                                if data["frame"] is not None and isinstance(data["frame"], np.ndarray): 
+                                    batch_frames.append(data["frame"])
+                                    batch_metadata.append(data)
                             except queue.Empty:
                                 break
                     except Exception as e:
                         logger.error(f"Error processing camera {camera_id}: {e}")
                         continue
 
-                if batch_frames:
+                # Process batch if we have frames
+                if len(batch_frames) > 0:
                     try:
                         with (
                             torch.amp.autocast("cuda")
@@ -281,54 +278,56 @@ class VideoProcessor:
                                 persist=True,
                                 tracker="bytetrack.yaml",
                                 verbose=False,
-                                classes=[0], 
-                                retina_masks=True,
+                                classes=[0]
                             )
 
-                        processing_futures = []
-                        for result, metadata in zip(results, batch_metadata):
-                            camera_id = metadata["camera_id"]
-                            if camera_id not in self.result_queues:
-                                continue
+                            processing_futures = []
+                            for idx, (result, metadata) in enumerate(zip(results, batch_metadata)):
+                                camera_id = metadata["camera_id"]
+                                if camera_id not in self.result_queues:
+                                    continue
 
-                            frame = batch_frames[batch_metadata.index(metadata)]
-                            future = self.thread_pool.submit(
-                                self._process_detections, frame, result, camera_id
-                            )
-                            processing_futures.append((future, camera_id))
+                                frame = batch_frames[idx]
+                                if frame is None or not isinstance(frame, np.ndarray):
+                                    continue
 
-                        # Handle processed frames
-                        for future, camera_id in processing_futures:
-                            try:
-                                processed_frame = future.result()
-                                if processed_frame is not None:
-                                    _, buffer = cv2.imencode(
-                                        ".jpg",
-                                        processed_frame,
-                                        [cv2.IMWRITE_JPEG_QUALITY, 50],
-                                    )
+                                future = self.thread_pool.submit(
+                                    self._process_detections, frame, result, camera_id
+                                )
+                                processing_futures.append((future, camera_id))
 
-                                    try:
-                                        self.result_queues[camera_id].put_nowait(
-                                            buffer.tobytes()
+                            # Handle processed frames
+                            for future, camera_id in processing_futures:
+                                try:
+                                    processed_frame = future.result()
+                                    if processed_frame is not None and isinstance(processed_frame, np.ndarray):
+                                        _, buffer = cv2.imencode(
+                                            ".jpg",
+                                            processed_frame,
+                                            [cv2.IMWRITE_JPEG_QUALITY, 80],
                                         )
-                                        if camera_id in self.fps_counters:
-                                            self.fps_counters[camera_id]["frames"] += 1
-                                    except queue.Full:
-                                        continue
-                            except Exception as e:
-                                logger.error(f"Error processing frame result: {e}")
-                                continue
+
+                                        try:
+                                            self.result_queues[camera_id].put_nowait(buffer.tobytes())
+                                            if camera_id in self.fps_counters:
+                                                self.fps_counters[camera_id]["frames"] += 1
+                                        except queue.Full:
+                                            continue
+                                except Exception as e:
+                                    logger.error(f"Error processing frame result: {e}")
+                                    continue
 
                     finally:
                         batch_frames.clear()
                         batch_metadata.clear()
 
+                time.sleep(0.001)  # Small sleep to prevent CPU overload
+
             except Exception as e:
                 logger.error(f"Error in detection worker: {e}")
+                batch_frames.clear()
+                batch_metadata.clear()
                 time.sleep(0.1)
-
-            time.sleep(0.001)
 
     def _process_detections(self, frame, result, camera_id):
         """Process detections with improved error handling and type checking"""
