@@ -341,12 +341,56 @@ The presigned URL request time analysis reveals a clear scaling pattern, with re
 	\label{presigned-url-request-time}
 \end{figure}
 
+\subsection{System Accuracy}
+The system's accuracy is evaluated based on the following metrics:
+\begin{itemize}
+      \item \textbf{Face Detection Accuracy:} The system's ability to detect faces in video streams accurately.
+      \item \textbf{Person Tracking Accuracy:} The system's ability to track individuals across multiple camera views.
+      \item \textbf{Cloud Processing Accuracy:} The system's ability to minimize cloud processing costs.
+      \item \textbf{Real-time Monitoring Accuracy:} The system's ability to provide real-time video stream monitoring. 
+\end{itemize}
+
+\subsubsection{Test Setup}
+
+System Used:\\
+\textbf{CPU:} AMD Ryzen 9 3900X 12-Core $\approx$ 4.10GHz\\
+\textbf{GPU:} NVIDIA GeForce RTX 3080\\
+\textbf{RAM:} 32GB\\
+\textbf{OS:} Windows 11\\
+System Performance:\\
+\textbf{CPU:} 25\%-55\%\\
+\textbf{GPU:} $\approx$ 80\%\\
+\textbf{RAM:} 20GB
+\subsubsection{Methodology:}
+At first we tested 1 webcam + the 6 video feed from the WiseNet dataset. We let the whole video play without uploading any know faces.
+After we moved the uploaded Faces from the unknown folder to the known folder and let the video play again.
+As a last step we uploaded manually croped faces(20) from the video feed to the known folder and let the video play again.
+YOLOv8n was used for face detection and tracking.
+\subsubsection{Face Detection Accuracy}
+After the first test we had 48 unknown faces triggering the alarm but only 50\% of this images were actually faces.\\
+After the second test we had 5 new unknown faces triggering the alarm but only 20\% of this images were actually faces.\\
+After the last test we had 31 new unknown faces triggering the alarm but 70\% of this images were actually faces.\\
+
+\subsubsection{Person Tracking Accuracy}
+The person tracking mostly worked with some difficulties when there work multiple people close together.\\
+The tracking across multiple camera views worked only sometimes.
+
+\subsubsection{Cloud Processing Accuracy}
+There were no images uploaded without at least one unkown preson in the frames at the time, but 
+sometime we had a delay detecting a know person and uploading the image to the cloud.
+Which resulted in a inaccurate frame uploaded to the cloud where the person was not in the frame anymore.
+
+
+\subsubsection{Real-time Monitoring Accuracy}
+The webcam and the simulated cameras did run at around 15 fps.
+
 \section{Shortcomings}
 
 \begin{itemize}
       \item \textbf{Performance:} The system's performance is limited by the processing power of the edge device, resulting in reduced frame rates for multiple video streams.
+                                    A dedicated GPU is required for optimal performance. 
       \item \textbf{Scalability:} The system's scalability is limited by the edge device's processing capabilities, with performance degradation at higher parallel processing loads.
-      \item \textbf{Reliability:} ...
+      \item \textbf{Reliability:} Sometime not only faces are uploaded to the cloud, but also the back of the person. Or even send the images where the person is out of the frame.
 \end{itemize}
 
 

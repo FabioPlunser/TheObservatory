@@ -11,12 +11,10 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field
 from torchvision import transforms
-from collections import deque, OrderedDict
+from collections import OrderedDict
 from nats_client import NatsClient, Commands
 from database import Database
-from concurrent.futures import ThreadPoolExecutor
 from torch.cuda import amp
-import multiprocessing as mp
 
 logger = logging.getLogger("ReID")
 
@@ -71,7 +69,7 @@ class Reid:
     ):
         self.device = device if device else self._init_device()
         self.model = self._init_model()
-        self.scaler = amp.GradScaler()  # For automatic mixed precision
+        self.scaler = amp.GradScaler('cuda')
 
         # Optimize transform pipeline
         self.transform = transforms.Compose(
