@@ -25,8 +25,8 @@
 \maketitle
 
 \begin{quote}
-\textit{"What is it worth to have hundreds of cameras if you can't spy on someone."}\\
---- The Observatory Team, 2024
+      \textit{"What is it worth to have hundreds of cameras if you can't spy on someone."}\\
+      --- The Observatory Team, 2024
 \end{quote}
 
 \section{Introduction}
@@ -49,16 +49,16 @@ The system requires significant parallel processing capabilities to handle multi
 \section{System architecture}
 \begin{itemize}
       \item \textbf{Data Collection:} Multiple video streams are collected from both emulated cameras, ESP32-CAM devices, and webcams.
-            Devices automatically discover the edge server using mDNS and establish WebSocket connections for streaming.          
+            Devices automatically discover the edge server using mDNS and establish WebSocket connections for streaming.
       \item \textbf{Data Processing:} The edge server uses multiprocessing to handle multiple video streams concurrently.
             Each stream is processed using YOLOv8 for person detection, with hardware acceleration where available.
-            A cross-camera tracking system maintains person identity across multiple views.          
+            A cross-camera tracking system maintains person identity across multiple views.
       \item \textbf{Data Storage:} AWS S3 implements a company-centric structure with separate directories for known and unknown faces.
-            The edge server maintains a SQLite database for device management, room organization, and face detection tracking.        
+            The edge server maintains a SQLite database for device management, room organization, and face detection tracking.
       \item \textbf{Data Analysis:} AWS Rekognition compares detected faces against the known faces database using the CompareFaces API.
-            The edge server implements intelligent face detection to minimize cloud processing costs.       
+            The edge server implements intelligent face detection to minimize cloud processing costs.
       \item \textbf{Signal Processing:} NATS handles all edge-cloud communication including bucket management, URL generation,
-            and face recognition requests. Device communication uses WebSockets with automatic reconnection capabilities.        
+            and face recognition requests. Device communication uses WebSockets with automatic reconnection capabilities.
       \item \textbf{User Interface:} A Svelte-based web interface provides real-time camera monitoring, alarm management,
             and system configuration. The interface supports room-based organization and device management.
 \end{itemize}
@@ -72,24 +72,23 @@ The system requires significant parallel processing capabilities to handle multi
 \end{figure}
 
 \begin{figure}[h!]
-	\centering
-	\includegraphics[width=1\linewidth]{images/architecturev2.excalidraw.png}
-	\caption{Adjusted prototype of the system architecture.}
-	\label{fig:prototype-adjusted}
+      \centering
+      \includegraphics[width=1\linewidth]{images/architecturev2.excalidraw.png}
+      \caption{Adjusted prototype of the system architecture.}
+      \label{fig:prototype-adjusted}
 \end{figure}
 
 \begin{figure}[h!]
-	\centering
-	% TODO: insert final architecture diagram
-	\includegraphics[width=1\linewidth]{images/architecturev2.excalidraw.png}
-	\caption{Final diagram of the system architecture.}
-	\label{fig:final-diagram}
+      \centering
+      \includegraphics[width=1\linewidth]{images/architecture_final.excalidraw.png}
+      \caption{Final diagram of the system architecture.}
+      \label{fig:final-diagram}
 \end{figure}
 \newpage
 \section{Implementation details}
 \subsection{System Components}
 \begin{itemize}
-      \item \textbf{Video Input Sources:} 
+      \item \textbf{Video Input Sources:}
             \begin{itemize}
                   \item RTSP stream support for IP cameras
                   \item OpenCV-based camera emulation
@@ -99,14 +98,14 @@ The system requires significant parallel processing capabilities to handle multi
                   \item Automatic stream recovery
             \end{itemize}
 
-      \item \textbf{Edge Server Core:} 
+      \item \textbf{Edge Server Core:}
             \begin{itemize}
                   \item Python-based async server architecture
                   \item RTSP stream handling with FFmpeg
                   \item mDNS service registration
                   \item SQLite with SQLAlchemy for some persistence
             \end{itemize}
-      \item \textbf{Camera Implementation:} 
+      \item \textbf{Camera Implementation:}
             \begin{itemize}
                   \item Primary RTSP stream support for all cameras
                   \item OpenCV-based frame processing pipeline
@@ -115,14 +114,14 @@ The system requires significant parallel processing capabilities to handle multi
                   \item Automatic stream recovery and reconnection
                   \item Configurable frame rate and quality settings(only in code not in the web interface)
             \end{itemize}
-      \item \textbf{Development Dataset:} 
+      \item \textbf{Development Dataset:}
             \begin{itemize}
                   \item Integration of WiseNet surveillance dataset
                   \item 6 camera feeds with 11 video sequences each
                   \item Automatic sequence looping for continuous testing
                   \item Configurable frame rates and resolutions(only in code not in the web interface)
             \end{itemize}
-      \item \textbf{Web Interface:} 
+      \item \textbf{Web Interface:}
             \begin{itemize}
                   \item Svelte-based reactive frontend
                   \item Real-time video stream display using WebSockets
@@ -138,23 +137,23 @@ The system requires significant parallel processing capabilities to handle multi
             Multiple video streams are handled concurrently through multiprocessing to maximize system resources.
             The processor implements frame skipping to lighten the processing load while maintaining effective detection rates.
             and includes automatic reconnection capabilities to handle temporary stream disruptions.
-      \item \textbf{Video Processing:} The edge server handles multiple video streams concurrently using Python's multiprocessing. 
-            Each camera stream is processed in separate processes to maximize CPU utilization. The video processor implements frame skipping 
+      \item \textbf{Video Processing:} The edge server handles multiple video streams concurrently using Python's multiprocessing.
+            Each camera stream is processed in separate processes to maximize CPU utilization. The video processor implements frame skipping
             to reduce processing load while maintaining effective detection rates.
-      \item \textbf{YOLO:} For face detection and person detection we use YOLOv8n, the most lightweight model of the YOLOv8 family. 
+      \item \textbf{YOLO:} For face detection and person detection we use YOLOv8n, the most lightweight model of the YOLOv8 family.
             The model runs on the edge server and processes each camera feed in real-time. We utilize hardware acceleration where available,
             supporting CUDA for NVIDIA GPUs and MPS for Apple Silicon, with CPU fallback.
-      \item \textbf{Tracking:} We implement multi-camera person tracking using ByteTrack for real-time person tracking and using torchreid for the person re-identification task. 
-            This allows us to maintain person identity across multiple camera views and avoid redundant face recognition requests. 
+      \item \textbf{Tracking:} We implement multi-camera person tracking using ByteTrack for real-time person tracking and using torchreid for the person re-identification task.
+            This allows us to maintain person identity across multiple camera views and avoid redundant face recognition requests.
             Each tracked person maintains their recognition status (pending, in\_progress, recognized, unknown) and face ID across the system.
 \end{itemize}
 
 \subsection{Data Storage}
 \begin{itemize}
-      \item \textbf{AWS S3:} Our storage solution utilizes a single S3 bucket named 'the-observatory-faces' that implements 
-            a company-centric organizational structure for comprehensive face management. The bucket's root level contains 
-            individual folders for each company using our system. Within each company folder, we maintain two distinct directories: 
-            'known-faces' and 'unknown-faces'. The 'known-faces' directory stores pre-approved facial records of employees and 
+      \item \textbf{AWS S3:} Our storage solution utilizes a single S3 bucket named 'the-observatory-faces' that implements
+            a company-centric organizational structure for comprehensive face management. The bucket's root level contains
+            individual folders for each company using our system. Within each company folder, we maintain two distinct directories:
+            'known-faces' and 'unknown-faces'. The 'known-faces' directory stores pre-approved facial records of employees and
             authorized personnel, while 'unknown-faces' automatically accumulates detected faces that don't match any known records.
       \item \textbf{Database:} The edge server uses SQLite with SQLAlchemy for local data management. The schema includes:
             \begin{itemize}
@@ -197,8 +196,8 @@ The system requires significant parallel processing capabilities to handle multi
                   \item Company-wide system configuration
                   \item Cloud connection management interface
             \end{itemize}
-      
-      \item \textbf{Technical Implementation:} 
+
+      \item \textbf{Technical Implementation:}
             \begin{itemize}
                   \item Static Svelte application for optimal performance
                   \item Real-time WebSocket communication
@@ -208,7 +207,7 @@ The system requires significant parallel processing capabilities to handle multi
                   \item Session persistence
             \end{itemize}
 
-      \item \textbf{Security Features:} 
+      \item \textbf{Security Features:}
             \begin{itemize}
                   \item Company-isolated data access
                   \item Secure WebSocket connections
@@ -223,122 +222,122 @@ Sadly this section is still incomplete and will be updated in the final report.
 Our evaluation focuses on three key aspects:
 
 \begin{itemize}
-      \item \textbf{Processing Performance:} 
+      \item \textbf{Processing Performance:}
             \begin{itemize}
-	\item Successfully processed multiple video streams concurrently(6 cameras + 1 Webcam), but at this but the frame rate is not optimal.
-	\item Detect new people in less than 2 seconds  
-		\item Successfully processed multiple video streams concurrently(6 cameras + 1 Webcam), but at this but the frame rate is not optimal.
-	\item Detect new people in less than 2 seconds  
-\end{itemize}
+                  \item Successfully processed multiple video streams concurrently(6 cameras + 1 Webcam), but at this but the frame rate is not optimal.
+                  \item Detect new people in less than 2 seconds
+                  \item Successfully processed multiple video streams concurrently(6 cameras + 1 Webcam), but at this but the frame rate is not optimal.
+                  \item Detect new people in less than 2 seconds
+            \end{itemize}
 
-\item \textbf{Scalability:}
-\begin{itemize}
-	\item Connecting additional cameras should be straightforward
-	\item The Nats messaging system allows for easy scaling of the system
-\end{itemize}
-\item \textbf{Reliability:}
-\begin{itemize}
-	\item Automatic stream recovery and reconnection
-	\item Start scripts for easy deployment on new devices
-\end{itemize}
+      \item \textbf{Scalability:}
+            \begin{itemize}
+                  \item Connecting additional cameras should be straightforward
+                  \item The Nats messaging system allows for easy scaling of the system
+            \end{itemize}
+      \item \textbf{Reliability:}
+            \begin{itemize}
+                  \item Automatic stream recovery and reconnection
+                  \item Start scripts for easy deployment on new devices
+            \end{itemize}
 \end{itemize}
 \subsection{Measurements}
 \begin{itemize}
-	\item 24 Images and 5 parallel:
-	\begin{table}[ht]
-		\begin{tabulary}{\textwidth}{|C|C|C|C|C|}
-			\hline
-			\textbf{Name} &
-			\textbf{min.} &
-			\textbf{max.} &
-			\textbf{mean} &
-			\textbf{median} 
-			\\\hline
-			Total processing time & 0.675 & 1.360 & 0.869 & 0.794  \\\hline
-			Presigned url request time & 0.120 & 0.194 & 0.143 & 0.133  \\\hline
-			Image upload time & 0.499 & 1.161 & 0.720 & 0.657  \\\hline
-			Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
-		\end{tabulary} 
-	\end{table}
-	
-	\item 	 24 Images and 24 parallel:
-	\begin{table}[ht]
-		\begin{tabulary}{\textwidth}{|C|C|C|C|C|}
-			\hline
-			\textbf{Name} &
-			\textbf{min.} &
-			\textbf{max.} &
-			\textbf{mean} &
-			\textbf{median}
-			\\\hline
-			Total processing time & 0.087 & 1.648 & 1.224 & 1.189  \\\hline
-			Presigned url request time & 0.214 & 0.349 & 0.266 & 0.270  \\\hline
-			Image upload time & 0.609 & 1.372 & 0.954 & 0.933  \\\hline
-			Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
-		\end{tabulary} 
-	\end{table}
-	
-	
-	\item 	 100 Images and 100 parallel:
-	\begin{table}[ht]
-		\begin{tabulary}{\textwidth}{|C|C|C|C|C|}
-			\hline
-			\textbf{Name} &
-			\textbf{min.} &
-			\textbf{max.} &
-			\textbf{mean} &
-			\textbf{median} 
-			\\\hline
-			Total processing time & 1.162 & 8.845 & 5.962 & 7.779  \\\hline
-			Presigned url request time & 0.509 & 1.659 & 1.089 & 1.061  \\\hline
-			Image upload time & 0.588 & 7.720 & 4.869 & 6.447  \\\hline
-			Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
-		\end{tabulary} 
-	\end{table}
-	\item 	 200 Images and 200 parallel:
-	\begin{table}[ht]
-		\begin{tabulary}{\textwidth}{|C|C|C|C|C|}
-			\hline
-			\textbf{Name} &
-			\textbf{min.} &
-			\textbf{max.} &
-			\textbf{mean} &
-			\textbf{median} 
+      \item 24 Images and 5 parallel:
+            \begin{table}[ht]
+                  \begin{tabulary}{\textwidth}{|C|C|C|C|C|}
+                        \hline
+                        \textbf{Name} &
+                        \textbf{min.} &
+                        \textbf{max.} &
+                        \textbf{mean} &
+                        \textbf{median}
+                        \\\hline
+                        Total processing time & 0.675 & 1.360 & 0.869 & 0.794  \\\hline
+                        Presigned url request time & 0.120 & 0.194 & 0.143 & 0.133  \\\hline
+                        Image upload time & 0.499 & 1.161 & 0.720 & 0.657  \\\hline
+                        Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
+                  \end{tabulary}
+            \end{table}
 
-			\\\hline
-			Total processing time & 1.487 & 8.254 & 5.370 & 5.580  \\\hline
-			Presigned url request time & 0.820 & 2.920 & 1.354 & 1.046 \\\hline
-			Image upload time & 0.649 & 6.426 & 4.012 & 4.507  \\\hline
-			Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
-		\end{tabulary} 
-	\end{table}
+      \item 	 24 Images and 24 parallel:
+            \begin{table}[ht]
+                  \begin{tabulary}{\textwidth}{|C|C|C|C|C|}
+                        \hline
+                        \textbf{Name} &
+                        \textbf{min.} &
+                        \textbf{max.} &
+                        \textbf{mean} &
+                        \textbf{median}
+                        \\\hline
+                        Total processing time & 0.087 & 1.648 & 1.224 & 1.189  \\\hline
+                        Presigned url request time & 0.214 & 0.349 & 0.266 & 0.270  \\\hline
+                        Image upload time & 0.609 & 1.372 & 0.954 & 0.933  \\\hline
+                        Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
+                  \end{tabulary}
+            \end{table}
+
+
+      \item 	 100 Images and 100 parallel:
+            \begin{table}[ht]
+                  \begin{tabulary}{\textwidth}{|C|C|C|C|C|}
+                        \hline
+                        \textbf{Name} &
+                        \textbf{min.} &
+                        \textbf{max.} &
+                        \textbf{mean} &
+                        \textbf{median}
+                        \\\hline
+                        Total processing time & 1.162 & 8.845 & 5.962 & 7.779  \\\hline
+                        Presigned url request time & 0.509 & 1.659 & 1.089 & 1.061  \\\hline
+                        Image upload time & 0.588 & 7.720 & 4.869 & 6.447  \\\hline
+                        Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
+                  \end{tabulary}
+            \end{table}
+      \item 	 200 Images and 200 parallel:
+            \begin{table}[ht]
+                  \begin{tabulary}{\textwidth}{|C|C|C|C|C|}
+                        \hline
+                        \textbf{Name} &
+                        \textbf{min.} &
+                        \textbf{max.} &
+                        \textbf{mean} &
+                        \textbf{median}
+
+                        \\\hline
+                        Total processing time & 1.487 & 8.254 & 5.370 & 5.580  \\\hline
+                        Presigned url request time & 0.820 & 2.920 & 1.354 & 1.046 \\\hline
+                        Image upload time & 0.649 & 6.426 & 4.012 & 4.507  \\\hline
+                        Recognition time & 0.000 & 0.000 & 0.000 & 0.000 \\\hline
+                  \end{tabulary}
+            \end{table}
 \end{itemize}
 \subsection{Performance Analysis Graphs}
 
 \subsubsection{Total Processing Time Analysis}
 The total processing time analysis reveals comprehensive system performance characteristics across different parallel processing configurations. The minimum processing times show a relatively modest increase from 0.675 seconds with 5 parallel processes to 1.487 seconds with 200 parallel processes, demonstrating good baseline scalability. The maximum processing times exhibit more dramatic scaling effects, peaking at approximately 8.8 seconds for the 100-parallel configuration and showing slightly better performance at 8.2 seconds for the 200-parallel configuration, which suggests potential optimization in resource utilization at higher scales. The mean processing times demonstrate a significant jump when moving from 24 parallel processes (1.224 seconds) to 100 parallel processes (5.962 seconds), indicating a potential performance threshold where resource contention becomes a limiting factor. The median values closely follow the mean times but show some deviation in the 100-parallel configuration, suggesting occasional performance outliers that affect the average. The overall trend indicates that while the system can handle increased parallelism, there are clear performance trade-offs beyond certain thresholds, particularly when processing more than 24 concurrent requests.
-\begin{figure}[ht]	
-	\centering
-	\includegraphics[width=6cm,height=6cm,keepaspectratio]{images/measurements_cloud/total_processing_time.png}
-	\caption{Total processing time.}
-	\label{total-processing-time}
+\begin{figure}[ht]
+      \centering
+      \includegraphics[width=6cm,height=6cm,keepaspectratio]{images/measurements_cloud/total_processing_time.png}
+      \caption{Total processing time.}
+      \label{total-processing-time}
 \end{figure}
 \subsubsection{Image Upload Time Analysis}
 The image upload time graph demonstrates a clear correlation between parallel processing load and upload duration, with the 100-parallel and 200-parallel configurations showing significantly higher maximum upload times of approximately 7.7 and 6.4 seconds respectively. The minimum upload times remain relatively consistent across all configurations, ranging from 0.5 to 0.7 seconds, suggesting a baseline network overhead regardless of parallel load. The mean upload times show a notable increase from around 0.7 seconds with 24 images to approximately 4.5 seconds with larger batches, indicating potential resource contention or network bandwidth limitations at higher scales. Interestingly, the 200-parallel configuration shows slightly better performance than the 100-parallel configuration in terms of median upload time, suggesting possible optimization in the connection pooling or resource allocation at larger scales. The relatively small difference between mean and median values in the 24-image configurations indicates a more predictable performance at lower parallel loads, while the larger spreads in the 100 and 200 image configurations suggest more variable performance under heavy load.
-\begin{figure}[ht]	
-	\centering
-	\includegraphics[width=6cm,height=6cm,keepaspectratio]{images/measurements_cloud/image_upload_time.png}
-	\caption{Image upload time.}
-	\label{image-upload-time}
+\begin{figure}[ht]
+      \centering
+      \includegraphics[width=6cm,height=6cm,keepaspectratio]{images/measurements_cloud/image_upload_time.png}
+      \caption{Image upload time.}
+      \label{image-upload-time}
 \end{figure}
 
 \subsubsection{Presigned URL Request Time Analysis}
 The presigned URL request time analysis reveals a clear scaling pattern, with request times increasing proportionally with the number of parallel operations. The minimum request times show a gradual increase from 0.12 seconds with 5 parallel requests to 0.82 seconds with 200 parallel requests, indicating growing overhead in the AWS authentication and URL generation system. The maximum request times demonstrate more pronounced scaling effects, reaching nearly 3 seconds for the 200-parallel configuration, which suggests potential bottlenecks in the URL generation service under high concurrent loads. The mean request times maintain a relatively linear relationship with the number of parallel requests, increasing from 0.143 seconds to 1.354 seconds as parallelism scales up. The median values closely track the means in most configurations, indicating a fairly normal distribution of request times without significant outliers. Most notably, the spread between minimum and maximum times widens considerably at higher parallelism, suggesting decreased predictability in request latency under heavy load.
-\begin{figure}[ht]	
-	\centering
-	\includegraphics[width=6cm,height=6cm,keepaspectratio]{images/measurements_cloud/presigned_url_request_time.png}
-	\caption{Presigned URL request time.}
-	\label{presigned-url-request-time}
+\begin{figure}[ht]
+      \centering
+      \includegraphics[width=6cm,height=6cm,keepaspectratio]{images/measurements_cloud/presigned_url_request_time.png}
+      \caption{Presigned URL request time.}
+      \label{presigned-url-request-time}
 \end{figure}
 
 \subsection{System Accuracy}
@@ -347,7 +346,7 @@ The system's accuracy is evaluated based on the following metrics:
       \item \textbf{Face Detection Accuracy:} The system's ability to detect faces in video streams accurately.
       \item \textbf{Person Tracking Accuracy:} The system's ability to track individuals across multiple camera views.
       \item \textbf{Cloud Processing Accuracy:} The system's ability to minimize cloud processing costs.
-      \item \textbf{Real-time Monitoring Accuracy:} The system's ability to provide real-time video stream monitoring. 
+      \item \textbf{Real-time Monitoring Accuracy:} The system's ability to provide real-time video stream monitoring.
 \end{itemize}
 
 \subsubsection{Test Setup}
@@ -376,7 +375,7 @@ The person tracking mostly worked with some difficulties when there work multipl
 The tracking across multiple camera views worked only sometimes.
 
 \subsubsection{Cloud Processing Accuracy}
-There were no images uploaded without at least one unkown preson in the frames at the time, but 
+There were no images uploaded without at least one unkown preson in the frames at the time, but
 sometime we had a delay detecting a know person and uploading the image to the cloud.
 Which resulted in a inaccurate frame uploaded to the cloud where the person was not in the frame anymore.
 
@@ -388,7 +387,7 @@ The webcam and the simulated cameras did run at around 15 fps.
 
 \begin{itemize}
       \item \textbf{Performance:} The system's performance is limited by the processing power of the edge device, resulting in reduced frame rates for multiple video streams.
-                                    A dedicated GPU is required for optimal performance. 
+            A dedicated GPU is required for optimal performance.
       \item \textbf{Scalability:} The system's scalability is limited by the edge device's processing capabilities, with performance degradation at higher parallel processing loads.
       \item \textbf{Reliability:} Sometime not only faces are uploaded to the cloud, but also the back of the person. Or even send the images where the person is out of the frame.
 \end{itemize}
