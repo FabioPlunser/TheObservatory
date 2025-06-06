@@ -1,0 +1,30 @@
+name: Lua Benchmark
+
+on: [push]
+
+jobs:
+ benchmark:
+ runs-on: ubuntu-latest
+
+ steps:
+ - name: Checkout
+ uses: actions/checkout@v3
+
+ - name: Setup Lua
+ uses: leafo/gh-actions-lua@v9
+ with:
+ lua-version: "5.4"
+
+ - name: Build Compiler
+ run: make
+
+ - name: Run Benchmark
+ run: |
+ ./src/lua my_benchmark.lua > benchmark_results.txt
+
+ - name: Store Benchmark Results
+ uses: benchmark-action/github-action-benchmark@v1
+ with:
+ name: "Lua Benchmark"
+ tool: 'lua'
+ output-file-path: 'benchmark_results.txt'
